@@ -8,7 +8,16 @@ from strix.config import Settings
 from strix.interface.scan_setup import check_header_safe_credentials, preflight_model_connection
 
 
-_ENV_KEYS = ("LLM_API_KEY", "OPENAI_API_KEY", "LLM_EXTRA_HEADERS", "LLM_API_BASE", "STRIX_LLM")
+_ENV_KEYS = (
+    "LLM_API_KEY",
+    "OPENAI_API_KEY",
+    "LLM_EXTRA_HEADERS",
+    "LLM_API_BASE",
+    "STRIX_LLM",
+    "STRIX_DEDUPE_MODEL",
+    "DEDUPE_LLM_API_KEY",
+    "DEDUPE_LLM_EXTRA_HEADERS",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +74,32 @@ def test_extra_header_value_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match=r"LLM_EXTRA_HEADERS value for 'X-Team'.*U\+00E9"):
         check_header_safe_credentials(settings)
+
+
+def test_subscription_model_ignores_an_unused_main_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(monkeypatch, STRIX_LLM="chatgpt/gpt-5", LLM_API_KEY="sk-abc\u201d")
+
+    check_header_safe_credentials(settings)
+
+
+def test_dedupe_key_is_checked_when_a_dedupe_model_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        LLM_API_KEY="sk-plain",
+        STRIX_DEDUPE_MODEL="openai/gpt-4o-mini",
+        DEDUPE_LLM_API_KEY="sk-dedupe\u00a0",
+    )
+
+    with pytest.raises(ValueError, match=r"DEDUPE_LLM_API_KEY.*U\+00A0"):
+        check_header_safe_credentials(settings)
+
+
+def test_dedupe_key_is_ignored_without_a_dedupe_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(monkeypatch, LLM_API_KEY="sk-plain", DEDUPE_LLM_API_KEY="sk-dedupe\u00a0")
+
+    check_header_safe_credentials(settings)
 
 
 def test_preflight_rejects_the_key_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -66,14 +66,26 @@ def _first_non_ascii(value: str) -> tuple[int, str] | None:
     return None
 
 
+def _header_candidates(
+    prefix: str, api_key: str | None, extra_headers: dict[str, str] | None
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    if api_key:
+        candidates.append((f"{prefix}LLM_API_KEY", api_key))
+    for header, value in (extra_headers or {}).items():
+        candidates.append((f"{prefix}LLM_EXTRA_HEADERS header name {header!r}", header))
+        candidates.append((f"{prefix}LLM_EXTRA_HEADERS value for {header!r}", value))
+    return candidates
+
+
 def check_header_safe_credentials(settings: Settings) -> None:
     llm = settings.llm
+    dedupe = settings.dedupe
     candidates: list[tuple[str, str]] = []
-    if llm.api_key:
-        candidates.append(("LLM_API_KEY", llm.api_key))
-    for header, value in (llm.extra_headers or {}).items():
-        candidates.append((f"LLM_EXTRA_HEADERS header name {header!r}", header))
-        candidates.append((f"LLM_EXTRA_HEADERS value for {header!r}", value))
+    if not codex.subscription_model(llm.model):
+        candidates += _header_candidates("", llm.api_key, llm.extra_headers)
+    if dedupe.model and not codex.subscription_model(dedupe.model):
+        candidates += _header_candidates("DEDUPE_", dedupe.api_key, dedupe.extra_headers)
     for setting, value in candidates:
         found = _first_non_ascii(value)
         if found is None:
