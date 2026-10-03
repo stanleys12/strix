@@ -1,5 +1,3 @@
-"""Preflight names a non-ASCII character in a credential instead of raising UnicodeEncodeError."""
-
 from __future__ import annotations
 
 import asyncio

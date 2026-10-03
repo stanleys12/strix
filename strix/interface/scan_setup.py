@@ -67,13 +67,6 @@ def _first_non_ascii(value: str) -> tuple[int, str] | None:
 
 
 def check_header_safe_credentials(settings: Settings) -> None:
-    """Reject credential settings that cannot travel as HTTP header values.
-
-    httpx encodes header values as ASCII, so a smart quote, non-breaking space
-    or byte-order mark pasted into an API key otherwise surfaces as a bare
-    ``UnicodeEncodeError`` from inside the client. Name the setting and the
-    character instead; the value itself is neither printed nor rewritten.
-    """
     llm = settings.llm
     candidates: list[tuple[str, str]] = []
     if llm.api_key:
