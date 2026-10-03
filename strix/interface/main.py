@@ -415,11 +415,29 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     telemetry_start(args)
 
 
-def main() -> None:
-    configure_dependency_logging()
+def _force_utf8_streams() -> None:
+    """Give stdout/stderr a UTF-8 encoding, whatever the console code page.
 
+    Windows hands a redirected or legacy console stream the ANSI code page
+    (cp1252 and friends), which cannot encode Rich's output or the model's
+    text: one ``\u2713`` in a finding ends a headless run with
+    ``UnicodeEncodeError``. Streams without ``reconfigure`` (test captures,
+    replaced file objects) are left alone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(ValueError, OSError):
+            reconfigure(encoding="utf-8")
+
+
+def main() -> None:
     if sys.platform == "win32":
+        _force_utf8_streams()
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    configure_dependency_logging()
 
     if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
         try:

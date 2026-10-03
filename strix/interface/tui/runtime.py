@@ -11,7 +11,7 @@ import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from strix.config import load_settings, persist_current
 from strix.core.agents import AgentCoordinator
@@ -56,6 +56,16 @@ def _revision_count(report: dict[str, Any]) -> int:
 
 class GoTuiPreActivationError(RuntimeError):
     """A sidecar failure raised before the Go TUI activates."""
+
+
+def _open_output_sink() -> TextIO:
+    """A UTF-8 ``os.devnull`` handle for Python's stdout/stderr while the Go TUI owns the terminal.
+
+    UTF-8 is explicit because the locale encoding (cp1252 on Windows) cannot take
+    the model's text, and a logging handler that fails to write there floods the
+    log with ``--- Logging error ---`` reports.
+    """
+    return Path(os.devnull).open("a", buffering=1, encoding="utf-8")
 
 
 class GoTuiRuntime:
@@ -433,7 +443,7 @@ class GoTuiRuntime:
         # only the Python-level bindings change.
         original_stdout = sys.stdout
         original_stderr = sys.stderr
-        output_sink = Path(os.devnull).open("a", buffering=1)  # noqa: SIM115
+        output_sink = _open_output_sink()
         sys.stdout = output_sink
         sys.stderr = output_sink
         backend_socket: socket.socket | None = None
