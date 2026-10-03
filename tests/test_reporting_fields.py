@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -1087,7 +1088,9 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
     assert "markdown" in finish_desc.lower()
     assert "section body" in finish_desc.lower()
     assert "do not start a field with a heading" in finish_desc.lower()
-    assert "\n            # Executive Summary" not in finish_desc
+    example = finish_desc.split("Example (abbreviated", 1)[1]
+    heading_lines = [line for line in example.splitlines() if re.match(r"^\s*#{1,6}\s", line)]
+    assert heading_lines == []
 
     dep_desc = create_dependency_report.description
     assert "cve" in dep_desc.lower()
