@@ -59,12 +59,6 @@ class GoTuiPreActivationError(RuntimeError):
 
 
 def _open_output_sink() -> TextIO:
-    """A UTF-8 ``os.devnull`` handle for Python's stdout/stderr while the Go TUI owns the terminal.
-
-    UTF-8 is explicit because the locale encoding (cp1252 on Windows) cannot take
-    the model's text, and a logging handler that fails to write there floods the
-    log with ``--- Logging error ---`` reports.
-    """
     return Path(os.devnull).open("a", buffering=1, encoding="utf-8")
 
 

@@ -1,5 +1,3 @@
-"""Windows gives redirected stdout/stderr the ANSI code page; Strix forces UTF-8 (STR-742)."""
-
 from __future__ import annotations
 
 import io
