@@ -82,6 +82,17 @@ def test_subscription_model_ignores_an_unused_main_key(monkeypatch: pytest.Monke
     check_header_safe_credentials(settings)
 
 
+def test_subscription_model_still_checks_extra_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(
+        monkeypatch,
+        STRIX_LLM="chatgpt/gpt-5",
+        LLM_EXTRA_HEADERS='{"X-Team": "s\u00e9curit\u00e9"}',
+    )
+
+    with pytest.raises(ValueError, match=r"LLM_EXTRA_HEADERS value for 'X-Team'.*U\+00E9"):
+        check_header_safe_credentials(settings)
+
+
 def test_dedupe_key_is_checked_when_a_dedupe_model_is_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,10 +100,38 @@ def test_dedupe_key_is_checked_when_a_dedupe_model_is_set(
         monkeypatch,
         LLM_API_KEY="sk-plain",
         STRIX_DEDUPE_MODEL="openai/gpt-4o-mini",
-        DEDUPE_LLM_API_KEY="sk-dedupe\u00a0",
+        DEDUPE_LLM_API_KEY="sk-de\u00a0dupe",
     )
 
-    with pytest.raises(ValueError, match=r"DEDUPE_LLM_API_KEY.*U\+00A0"):
+    with pytest.raises(ValueError, match=r"DEDUPE_LLM_API_KEY.*U\+00A0.*position 6 of 10"):
+        check_header_safe_credentials(settings)
+
+
+def test_dedupe_key_is_checked_as_sent_after_resolve_dedupe_model_strips_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        LLM_API_KEY="sk-plain",
+        STRIX_DEDUPE_MODEL="openai/gpt-4o-mini",
+        DEDUPE_LLM_API_KEY="\u00a0sk-dedupe\u00a0",
+    )
+
+    check_header_safe_credentials(settings)
+
+
+def test_dedupe_subscription_model_checks_headers_but_not_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(
+        monkeypatch,
+        LLM_API_KEY="sk-plain",
+        STRIX_DEDUPE_MODEL="chatgpt/gpt-5",
+        DEDUPE_LLM_API_KEY="sk-dedupe\u201d",
+        DEDUPE_LLM_EXTRA_HEADERS='{"X-Team": "s\u00e9curit\u00e9"}',
+    )
+
+    with pytest.raises(ValueError, match=r"DEDUPE_LLM_EXTRA_HEADERS value for 'X-Team'"):
         check_header_safe_credentials(settings)
 
 
