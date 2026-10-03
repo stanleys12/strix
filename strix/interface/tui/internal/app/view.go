@@ -177,6 +177,18 @@ func wrapBlock(value string, width int) string {
 	return strings.Join(out, "\n")
 }
 
+// hyperlinkBlock wraps a URL to the column width and marks every wrapped line
+// as an OSC 8 hyperlink to the whole URL. Terminals that linkify by text only
+// see the first line of a wrapped URL, which for the viewer meant opening it
+// with a truncated token.
+func hyperlinkBlock(url string, width int, style lipgloss.Style) string {
+	lines := strings.Split(wrapBlock(url, width), "\n")
+	for i, line := range lines {
+		lines[i] = ansi.SetHyperlink(url) + style.Render(line) + ansi.ResetHyperlink()
+	}
+	return strings.Join(lines, "\n")
+}
+
 // scrollbarThumb brightens the bar being dragged so the grab reads as taking
 // hold of it.
 func (m Model) scrollbarThumb(target scrollbarTarget) lipgloss.Color {
@@ -603,8 +615,7 @@ func (m Model) viewerView(width int) string {
 	case "running":
 		status := lipgloss.NewStyle().Foreground(green).Render("● Viewer running")
 		if m.snapshot.ViewerURL != nil && strings.TrimSpace(*m.snapshot.ViewerURL) != "" {
-			url := wrapBlock(strings.TrimSpace(*m.snapshot.ViewerURL), width)
-			return status + "\n" + lipgloss.NewStyle().Foreground(dim).Render(url)
+			return status + "\n" + hyperlinkBlock(strings.TrimSpace(*m.snapshot.ViewerURL), width, lipgloss.NewStyle().Foreground(dim))
 		}
 		return status
 	case "unavailable":

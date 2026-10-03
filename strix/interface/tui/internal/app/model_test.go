@@ -890,6 +890,14 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	if want := strings.Count(model.viewerView(model.viewerContentWidth()), "\n") + 3; model.viewerHeight() != want {
 		t.Fatalf("viewer height = %d, want %d", model.viewerHeight(), want)
 	}
+
+	raw := model.viewerView(18)
+	if got, want := strings.Count(raw, ansi.SetHyperlink(url)), len(urlLines); got != want {
+		t.Fatalf("every wrapped line should link to the full URL: got %d links for %d lines in %q", got, want, raw)
+	}
+	if got := strings.Count(raw, ansi.ResetHyperlink()); got != len(urlLines) {
+		t.Fatalf("hyperlinks not closed: %d resets for %d lines", got, len(urlLines))
+	}
 }
 
 func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
