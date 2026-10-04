@@ -276,17 +276,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         return session
 
     async def delete(self, session: SandboxSession) -> SandboxSession:
-        inner = session._inner
-        # The SDK's delete() only runs inner.shutdown() (which terminates the
-        # agent's PTY exec streams) when the container still exists. Terminate
-        # them unconditionally first: otherwise the hijacked exec sockets are
-        # left to the garbage collector and their HTTP responses fail to close
-        # at interpreter exit ("Exception ignored while finalizing file").
-        pty_terminate_all = getattr(inner, "pty_terminate_all", None)
-        if pty_terminate_all is not None:
-            with contextlib.suppress(Exception):
-                await pty_terminate_all()
-        container_id = getattr(getattr(inner, "state", None), "container_id", None)
+        container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
         if container_id:
             # Best-effort kill: NotFound/APIError cover a gone or unhappy
             # container. RequestException covers a torn-down daemon socket —
