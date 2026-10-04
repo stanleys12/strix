@@ -1599,22 +1599,25 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
-    import docker
-    from docker.errors import DockerException
+    from strix.runtime.docker_connection import (
+        DockerConnectionError,
+        connect_docker,
+        explain_failure,
+    )
 
     try:
-        return docker.from_env()
-    except DockerException as exc:
-        report_error("docker_unavailable", exc)
+        return connect_docker()
+    except DockerConnectionError as exc:
+        report_error(f"docker_unavailable_{exc.reason}", exc.cause)
         console = Console()
+        cause, fix = explain_failure(exc)
         error_text = Text()
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
-            style="white",
-        )
+        error_text.append(f"{cause}\n", style="white")
+        error_text.append(f"{fix}\n\n", style="white")
+        error_text.append(f"Tried: {exc.endpoint.label}\n", style="dim")
+        error_text.append(exc.detail, style="dim red")
 
         panel = Panel(
             error_text,
@@ -1624,7 +1627,7 @@ def check_docker_connection() -> Any:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+        sys.exit(1)
 
 
 def image_exists(client: Any, image_name: str) -> bool:
