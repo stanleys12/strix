@@ -79,7 +79,7 @@ def test_direct_launch_with_a_bad_key_prints_the_panel_and_exits_before_the_tui(
     monkeypatch.setattr(
         cli_main,
         "_print_model_connection_error",
-        lambda exc, model: calls.append(f"panel:{model}:{exc}"),
+        lambda exc: calls.append(f"panel:{exc}"),
     )
     monkeypatch.setattr(cli_main, "persist_current", lambda: calls.append("persist"))
     monkeypatch.setattr(cli_main, "prepare_run", lambda _args: calls.append("prepare"))
@@ -89,7 +89,7 @@ def test_direct_launch_with_a_bad_key_prints_the_panel_and_exits_before_the_tui(
         cli_main._bootstrap_scan(argparse.Namespace(non_interactive=False, needs_setup=False))
 
     assert exit_info.value.code == 1
-    assert calls == ["panel:openai/gpt-4o:Error code: 401"]
+    assert calls == ["panel:Error code: 401"]
 
 
 def test_tui_startup_failure_marks_the_prepared_run_failed(monkeypatch: pytest.MonkeyPatch) -> None:

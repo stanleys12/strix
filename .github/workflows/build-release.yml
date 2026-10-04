@@ -72,7 +72,10 @@ jobs:
             TUI_NAME="strix-tui"
             dist/strix --version
           fi
-          uv run pyi-archive_viewer -l "$PYI_BINARY" | grep -E "strix[/\\]+bin[/\\]+$TUI_NAME" >/dev/null
+          uv run pyi-archive_viewer -l -r "$PYI_BINARY" > archive.txt
+          grep -E "strix[/\\]+bin[/\\]+$TUI_NAME" archive.txt >/dev/null
+          grep -E "'google\.auth\.transport\.requests'" archive.txt >/dev/null
+          grep -E "'boto3\.session'" archive.txt >/dev/null
 
           if [[ "${{ matrix.target }}" == "linux-arm64" ]]; then
             file dist/strix

@@ -36,6 +36,8 @@ jobs:
           uv pip install --python /tmp/strix-smoke/bin/python dist/*.whl
           /tmp/strix-smoke/bin/strix --version
           /tmp/strix-smoke/bin/strix --help >/dev/null
+      - name: Vertex AI and Bedrock dependencies install with the wheel
+        run: /tmp/strix-smoke/bin/python -c "import google.auth.transport.requests, boto3"
 
   binary:
     runs-on: ubuntu-latest
@@ -51,5 +53,9 @@ jobs:
       - run: make tui-build
       - run: uv run --frozen pyinstaller strix.spec --noconfirm
       - run: dist/strix --version
-      - name: Binary bundles the TUI sidecar
-        run: uv run --frozen pyi-archive_viewer -l dist/strix | grep -E "strix/bin/strix-tui" >/dev/null
+      - name: Binary bundles the TUI sidecar and the provider dependencies
+        run: |
+          uv run --frozen pyi-archive_viewer -l -r dist/strix > archive.txt
+          grep -E "strix/bin/strix-tui" archive.txt >/dev/null
+          grep -E "'google\.auth\.transport\.requests'" archive.txt >/dev/null
+          grep -E "'boto3\.session'" archive.txt >/dev/null

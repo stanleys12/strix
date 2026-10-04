@@ -6,6 +6,7 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -53,21 +54,6 @@ from strix.telemetry import posthog, report_error, scarf, set_scan_phase
 from strix.telemetry.logging import setup_console_logging
 
 
-BEDROCK_MODEL_PREFIX = "bedrock/"
-BEDROCK_MISSING_MODULE_ERROR = "No module named 'boto3'"
-BEDROCK_EXTRA_HINT = (
-    'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
-)
-VERTEX_MODEL_MARKER = "vertex"
-VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
-VERTEX_EXTRA_HINT = (
-    'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
-)
-
-
-import logging  # noqa: E402
-
-
 logger = logging.getLogger(__name__)
 
 _ROOT_SUBCOMMAND_HELP = """
@@ -94,29 +80,6 @@ def _exception_messages(exc: BaseException) -> tuple[str, ...]:
         if current.__context__ is not None:
             stack.append(current.__context__)
     return tuple(messages)
-
-
-def _provider_import_hint(exc: BaseException, model: str) -> str | None:
-    """Return an install hint when *exc* is a missing provider dependency.
-
-    Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
-    Vertex AI needs ``google-auth``. When either is absent, litellm may raise an
-    ``ImportError``/``ModuleNotFoundError`` directly or wrap it in a connection
-    error. Map the missing module back to the matching extra so the user knows
-    what to install. Returns ``None`` for any unrelated error.
-    """
-    model_name = model.lower()
-    messages = _exception_messages(exc)
-    if any(
-        BEDROCK_MISSING_MODULE_ERROR in message for message in messages
-    ) and model_name.startswith(BEDROCK_MODEL_PREFIX):
-        return BEDROCK_EXTRA_HINT
-    if (
-        any(VERTEX_MISSING_MODULE_ERROR in message for message in messages)
-        and VERTEX_MODEL_MARKER in model_name
-    ):
-        return VERTEX_EXTRA_HINT
-    return None
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
@@ -364,7 +327,7 @@ def _print_error_panel(title: str, message: str) -> None:
     console.print()
 
 
-def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
+def _print_model_connection_error(exc: BaseException) -> None:
     console = Console()
     error_text = Text()
     sub_hint = _subscription_error_hint(exc)
@@ -380,9 +343,6 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
         error_text.append("\n\n", style="white")
         error_text.append("Could not establish connection to the language model.\n", style="white")
         error_text.append("Please check your configuration and try again.\n", style="white")
-        hint = _provider_import_hint(exc, model_name)
-        if hint is not None:
-            error_text.append(f"\n{hint}\n", style="bold yellow")
         error_text.append(f"\nError: {exc}", style="dim white")
 
     panel = Panel(
@@ -435,7 +395,7 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
         asyncio.run(warm_up_llm())
     except ModelConnectionError as exc:
         report_error("model_connection_failed", exc)
-        _print_model_connection_error(exc, exc.model_name)
+        _print_model_connection_error(exc)
         sys.exit(1)
     persist_current()
     try:
