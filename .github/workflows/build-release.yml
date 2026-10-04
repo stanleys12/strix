@@ -43,12 +43,14 @@ jobs:
           python-version: '3.12'
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+        with:
+          enable-cache: false
 
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
         with:
           go-version: '1.24.x'
           check-latest: true
-          cache-dependency-path: strix/interface/tui/go.sum
+          cache: false
 
       - name: Build
         shell: bash
