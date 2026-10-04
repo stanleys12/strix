@@ -109,15 +109,12 @@ func (m Model) panelTitle(panel sidebarPanel) string {
 	case panelMcp:
 		return fmt.Sprintf("MCP (%d)", len(m.snapshot.Connections))
 	default:
-		return "Model"
+		return m.snapshot.Model
 	}
 }
 
 func (m Model) panelHeader(panel sidebarPanel, width int) string {
 	style := lipgloss.NewStyle().Foreground(dim)
-	if panel == panelStats {
-		return truncate(style.Render(m.panelTitle(panel)), max(1, width))
-	}
 	glyph := panelZoomGlyph
 	if m.zoomedPanel == panel {
 		glyph = panelUnzoomGlyph
@@ -144,9 +141,12 @@ func (m Model) panelBox(panel sidebarPanel, body string, width, height int, focu
 	if focused {
 		border = green
 	}
-	content := m.panelHeader(panel, width-4)
-	if body != "" {
-		content += "\n" + body
+	content := body
+	if panel != panelStats {
+		content = m.panelHeader(panel, width-4)
+		if body != "" {
+			content += "\n" + body
+		}
 	}
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.RoundedBorder()).
 		BorderForeground(border).Padding(0, 1).Render(content)

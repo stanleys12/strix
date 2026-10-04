@@ -585,7 +585,7 @@ func (m Model) sidebarView(width, height int) string {
 	}
 	stats := ""
 	if statsHeight > 1 {
-		stats = fixedPanelBody(lipgloss.NewStyle().Width(width-4).Render(m.statsView()), width-4, statsHeight-3)
+		stats = fixedPanelBody(lipgloss.NewStyle().Width(width-4).Render(m.statsView()), width-4, statsHeight-2)
 	}
 	parts = append(parts, m.panelBox(panelStats, stats, width, statsHeight, false))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -596,7 +596,7 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 	// wraps inside the sidebar, and counting only its newlines would size the
 	// box short and push the whole frame past the bottom of the terminal.
 	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.sidebarInnerWidth()).Render(m.statsView()))
-	statsHeight = m.panelHeight(panelStats, min(15, statsRows+3))
+	statsHeight = m.panelHeight(panelStats, min(15, statsRows+2))
 	if len(m.snapshot.Vulnerabilities) > 0 {
 		vulnHeight = m.panelHeight(panelFindings, min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+3))
 	}

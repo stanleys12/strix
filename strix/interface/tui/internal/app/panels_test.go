@@ -30,7 +30,7 @@ func panelsModel(t *testing.T) Model {
 	url := "http://127.0.0.1:57388/?token=abc"
 	m.snapshot = protocol.Snapshot{
 		ScanStarted: true, ScanState: "running", Agents: agents, Connections: conns,
-		ViewerStatus: "running", ViewerURL: &url,
+		ViewerStatus: "running", ViewerURL: &url, Model: "openrouter/z-ai/glm-5.3",
 		Vulnerabilities: []map[string]any{{"id": "v1", "title": "Finding one", "severity": "high"}},
 	}
 	m.resizeViewport()
@@ -58,7 +58,7 @@ func TestSidebarPanelsRenderHeadersWithControls(t *testing.T) {
 	m := panelsModel(t)
 	_, sidebarWidth, _, _ := m.layout()
 	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
-	for _, want := range []string{"▾ Agents (31)", "▾ Findings (1)", "▾ MCP (12)", "Model", "⤢"} {
+	for _, want := range []string{"▾ Agents (31)", "▾ Findings (1)", "▾ MCP (12)", "⤢"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sidebar missing %q:\n%s", want, view)
 		}
@@ -266,8 +266,8 @@ func TestModelPanelHasNoControlsAndNeverShrinks(t *testing.T) {
 	_, sidebarWidth, _, _ := m.layout()
 	stats := panelRectOf(t, m, panelStats)
 	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
-	if header := rows[stats.top+1]; strings.ContainsAny(header, "▾▸⤢⤡") || !strings.Contains(header, "Model") {
-		t.Fatalf("Model header should carry no controls: %q", header)
+	if first := rows[stats.top+1]; strings.ContainsAny(first, "▾▸⤢⤡") || strings.Contains(first, "Model") || !strings.Contains(first, m.snapshot.Model[:8]) {
+		t.Fatalf("Model panel should start with the model name and carry no controls: %q", first)
 	}
 	before := m.sidebarPanels()
 	m = click(t, m, m.width-3, stats.top+1)
@@ -300,8 +300,8 @@ func TestModelPanelSticksToBottom(t *testing.T) {
 	if len(rows) != m.height {
 		t.Fatalf("sidebar renders %d rows, want %d", len(rows), m.height)
 	}
-	if !strings.Contains(rows[stats.top+1], "Model") {
-		t.Fatalf("Model header not where its rect says:\n%s", strings.Join(rows[stats.top-2:], "\n"))
+	if !strings.Contains(rows[stats.top+1], m.snapshot.Model[:8]) {
+		t.Fatalf("Model panel not where its rect says:\n%s", strings.Join(rows[stats.top-2:], "\n"))
 	}
 }
 
