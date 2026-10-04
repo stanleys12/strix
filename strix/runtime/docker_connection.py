@@ -1,11 +1,3 @@
-"""Connect to the Docker daemon the way the ``docker`` CLI does.
-
-``docker.from_env()`` only looks at ``DOCKER_HOST`` and otherwise assumes
-``/var/run/docker.sock`` (a named pipe on Windows). The CLI also honours the
-current docker context, which is where Docker Desktop on macOS (without the
-"default socket" option), OrbStack and Colima register their sockets.
-"""
-
 from __future__ import annotations
 
 import os
