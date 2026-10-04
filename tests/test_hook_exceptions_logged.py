@@ -1,112 +1,206 @@
-import http.client
-import http.cookiejar
-import socket
+"""Nothing from sys.unraisablehook or threading.excepthook reaches the terminal.
+
+Python prints "Exception ignored in ..." reports (finalizers, ``__del__``, GC
+and weakref callbacks, files closed at interpreter exit) and uncaught thread
+exceptions straight to stderr. Strix routes both to its own logger instead,
+so they end up in strix.log (and on stderr only under STRIX_DEBUG=1).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
 import sys
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
-import urllib3.response
 
 from strix.telemetry import logging as tlog
-from strix.telemetry.logging import _is_urllib3_closed_file_noise
 
 
-class _Args:
-    def __init__(
-        self, exc_value: BaseException | None, obj: object, err_msg: str | None = None
-    ) -> None:
-        self.exc_type = type(exc_value) if exc_value is not None else None
-        self.exc_value = exc_value
-        self.exc_traceback = None
-        self.err_msg = err_msg
-        self.object = obj
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
-def _urllib3_response() -> urllib3.response.HTTPResponse:
-    return urllib3.response.HTTPResponse(body=b"")
+def _unraisable(exc: BaseException, obj: object, err_msg: str | None = None) -> object:
+    return SimpleNamespace(
+        exc_type=type(exc),
+        exc_value=exc,
+        exc_traceback=None,
+        err_msg=err_msg,
+        object=obj,
+    )
 
 
-def test_filters_urllib3_closed_file_noise() -> None:
-    args = _Args(ValueError("I/O operation on closed file."), _urllib3_response())
-    assert _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
+@pytest.fixture
+def strix_records() -> Iterator[list[logging.LogRecord]]:
+    records: list[logging.LogRecord] = []
 
+    class _Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
 
-def test_ignores_closed_file_errors_from_other_http_modules() -> None:
-    args = _Args(ValueError("I/O operation on closed file."), http.cookiejar.CookieJar())
-    assert not _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
-
-
-def test_filters_http_client_closed_file_noise() -> None:
-    sock = socket.socket()
+    handler = _Collect()
+    root = logging.getLogger("strix")
+    root.addHandler(handler)
     try:
-        response = http.client.HTTPResponse(sock)
+        yield records
     finally:
-        sock.close()
-    args = _Args(ValueError("I/O operation on closed file."), response)
-    assert _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
+        root.removeHandler(handler)
+
+
+@pytest.fixture
+def hooks(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[object]]:
+    """Install strix's hooks over recording stand-ins for Python's defaults."""
+    unraisable_calls: list[object] = []
+    thread_calls: list[object] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable_calls.append)
+    monkeypatch.setattr(threading, "excepthook", thread_calls.append)
+    monkeypatch.setattr(tlog, "_hooks_installed", False)
+    tlog.configure_dependency_logging()
+    return unraisable_calls, thread_calls
 
 
 @pytest.mark.parametrize(
-    "repr_text",
+    "args",
     [
-        "<urllib3.response.HTTPResponse object at 0x7f2d3c1f0b10>",
-        "<http.client.HTTPResponse object at 0x7f2d3c1f0b10>",
-    ],
-)
-def test_filters_python314_finalizer_shape(repr_text: str) -> None:
-    """3.14 reports IOBase finalizer failures with object=None and the repr in err_msg."""
-    args = _Args(
-        ValueError("I/O operation on closed file."),
-        None,
-        err_msg=f"Exception ignored while finalizing file {repr_text}",
-    )
-    assert _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
-
-
-def test_python314_shape_passes_through_other_files() -> None:
-    args = _Args(
-        ValueError("I/O operation on closed file."),
-        None,
-        err_msg="Exception ignored while finalizing file <_io.TextIOWrapper name='x' mode='w'>",
-    )
-    assert not _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
-    assert not _is_urllib3_closed_file_noise(
-        _Args(ValueError("I/O operation on closed file."), None)  # type: ignore[arg-type]
-    )
-
-
-def test_passes_through_other_unraisables() -> None:
-    assert not _is_urllib3_closed_file_noise(
-        _Args(ValueError("I/O operation on closed file."), object())  # type: ignore[arg-type]
-    )
-    assert not _is_urllib3_closed_file_noise(
-        _Args(RuntimeError("boom"), _urllib3_response())  # type: ignore[arg-type]
-    )
-    assert not _is_urllib3_closed_file_noise(
-        _Args(ValueError("something else"), _urllib3_response())  # type: ignore[arg-type]
-    )
-
-
-def test_installed_hook_filters_and_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[object] = []
-    monkeypatch.setattr(sys, "unraisablehook", calls.append)
-    monkeypatch.setattr(tlog, "_unraisable_hook_installed", False)
-    tlog._silence_urllib3_finalizer_noise()
-    hook = sys.unraisablehook
-    assert hook is not calls.append
-
-    hook(_Args(ValueError("I/O operation on closed file."), _urllib3_response()))  # type: ignore[arg-type]
-    hook(
-        _Args(  # type: ignore[arg-type]
+        _unraisable(ValueError("I/O operation on closed file."), object()),
+        _unraisable(
             ValueError("I/O operation on closed file."),
             None,
             err_msg=(
                 "Exception ignored while finalizing file "
                 "<urllib3.response.HTTPResponse object at 0x1>"
             ),
-        )
-    )
-    assert calls == []
+        ),
+        _unraisable(RuntimeError("boom"), object()),
+        _unraisable(KeyError("x"), None, err_msg="Exception ignored in: <function f>"),
+    ],
+)
+def test_every_unraisable_is_logged_not_printed(
+    args: object,
+    hooks: tuple[list[object], list[object]],
+    strix_records: list[logging.LogRecord],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    unraisable_calls, _ = hooks
 
-    other = _Args(RuntimeError("boom"), object())
-    hook(other)  # type: ignore[arg-type]
-    assert calls == [other]
+    sys.unraisablehook(args)  # type: ignore[arg-type]
+
+    assert unraisable_calls == []
+    assert capsys.readouterr().err == ""
+    [record] = strix_records
+    assert record.levelno == logging.WARNING
+    assert record.name == "strix.telemetry"
+    message = record.getMessage()
+    if args.err_msg:  # type: ignore[attr-defined]
+        assert message.startswith(args.err_msg)  # type: ignore[attr-defined]
+    else:
+        assert message.startswith("Exception ignored in <object object")
+    assert str(args.exc_value) in message  # type: ignore[attr-defined]
+
+
+@pytest.mark.usefixtures("hooks")
+def test_unraisable_is_dropped_when_strix_has_no_handlers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """After scan teardown the strix logger tree has no handlers; the report
+    must be dropped rather than handed to logging.lastResort (stderr)."""
+    root = logging.getLogger("strix")
+    saved, root.handlers = root.handlers, []
+    try:
+        sys.unraisablehook(_unraisable(RuntimeError("late"), object()))  # type: ignore[arg-type]
+    finally:
+        root.handlers = saved
+    assert capsys.readouterr().err == ""
+
+
+def test_thread_exceptions_are_logged_not_printed(
+    hooks: tuple[list[object], list[object]],
+    strix_records: list[logging.LogRecord],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, thread_calls = hooks
+
+    def _boom() -> None:
+        raise RuntimeError("worker failed")
+
+    thread = threading.Thread(target=_boom, name="strix-worker")
+    thread.start()
+    thread.join()
+
+    assert thread_calls == []
+    assert capsys.readouterr().err == ""
+    [record] = strix_records
+    assert record.levelno == logging.WARNING
+    message = record.getMessage()
+    assert message.startswith("Exception in thread strix-worker")
+    assert "RuntimeError: worker failed" in message
+
+
+@pytest.mark.usefixtures("hooks")
+def test_thread_system_exit_is_ignored(strix_records: list[logging.LogRecord]) -> None:
+    thread = threading.Thread(target=sys.exit, args=(3,))
+    thread.start()
+    thread.join()
+    assert strix_records == []
+
+
+def test_hooks_install_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tlog, "_hooks_installed", False)
+    tlog.configure_dependency_logging()
+    installed = (sys.unraisablehook, threading.excepthook)
+    tlog.configure_dependency_logging()
+    assert (sys.unraisablehook, threading.excepthook) == installed
+
+
+_EXIT_SCRIPT = r"""
+import logging, sys, threading
+from strix.telemetry.logging import setup_console_logging
+setup_console_logging()
+
+class Leaky:
+    def __del__(self):
+        raise ValueError("I/O operation on closed file.")
+
+Leaky()                      # collected right away
+keep = Leaky()               # collected at interpreter shutdown
+
+def worker():
+    raise RuntimeError("worker failed")
+t = threading.Thread(target=worker); t.start(); t.join()
+
+import urllib3.response, io
+resp = urllib3.response.HTTPResponse(body=io.BytesIO(b""), preload_content=False)
+resp._fp.close()             # socket file closed before the response: the 3.14 exit noise
+del resp
+print("done")
+"""
+
+
+def test_process_exit_prints_nothing_to_stderr() -> None:
+    """End to end in a fresh interpreter: finalizer errors (including one at
+    interpreter shutdown), a thread traceback and the closed-file response
+    case produce no stderr output, with the default (non-debug) handlers."""
+    env = {"PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _EXIT_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**_safe_env(), **env, "STRIX_DEBUG": ""},
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "done"
+    assert proc.stderr == ""
+
+
+def _safe_env() -> dict[str, str]:
+    return {
+        k: v for k, v in os.environ.items() if k in {"PATH", "HOME", "SYSTEMROOT", "TEMP", "TMP"}
+    }

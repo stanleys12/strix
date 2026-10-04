@@ -5,8 +5,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import re
 import sys
+import threading
+import traceback
 import warnings
 from contextvars import ContextVar
 from pathlib import Path  # noqa: TC003  used at runtime by ``setup_scan_logging``
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import TracebackType
 
 
 _SCAN_ID: ContextVar[str | None] = ContextVar("strix_scan_id", default=None)
@@ -89,52 +91,76 @@ def configure_dependency_logging() -> None:
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").propagate = False
     warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
-    _silence_urllib3_finalizer_noise()
+    _route_hook_exceptions_to_log()
 
 
-_unraisable_hook_installed = False
+_hooks_installed = False
 
 
-_FINALIZER_FILE_RE = re.compile(r"finalizing file <(urllib3|http\.client)\.")
+def _format_exception(
+    exc_type: type[BaseException] | None,
+    exc_value: BaseException | None,
+    exc_traceback: TracebackType | None,
+) -> str:
+    if exc_value is None and exc_type is None:
+        return "-"
+    return "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip()
 
 
-def _is_urllib3_closed_file_noise(unraisable: sys.UnraisableHookArgs) -> bool:
-    """An HTTP response (urllib3 or http.client) whose socket was closed first.
+def _log_quietly(message: str, *args: object) -> None:
+    """Write a WARNING to the strix log; never let it reach the terminal.
 
-    Python 3.14 reports IOBase finalizer failures with ``object=None`` and the
-    object's repr inside ``err_msg`` ("Exception ignored while finalizing file
-    <...>"); earlier versions pass the object itself.
+    Dropped (not printed) when the strix logger tree has no handler, which
+    is the case after scan teardown: ``logging.lastResort`` would otherwise
+    print it to stderr. The interpreter may be finalizing, so any failure
+    inside logging itself is swallowed too.
     """
-    if not (
-        isinstance(unraisable.exc_value, ValueError)
-        and "I/O operation on closed file" in str(unraisable.exc_value)
-    ):
-        return False
-    if unraisable.object is not None:
-        module = type(unraisable.object).__module__
-        return module.split(".")[0] == "urllib3" or module == "http.client"
-    return _FINALIZER_FILE_RE.search(unraisable.err_msg or "") is not None
+    with contextlib.suppress(BaseException):
+        logger = logging.getLogger("strix.telemetry")
+        if logger.hasHandlers():
+            logger.warning(message, *args)
 
 
-def _silence_urllib3_finalizer_noise() -> None:
-    global _unraisable_hook_installed  # noqa: PLW0603
-    if _unraisable_hook_installed:
+def _route_hook_exceptions_to_log() -> None:
+    """Keep "Exception ignored in ..." reports and thread tracebacks off the terminal.
+
+    Python's default ``sys.unraisablehook`` (finalizers, ``__del__``, GC and
+    weakref callbacks, buffered-file close at exit) and
+    ``threading.excepthook`` (uncaught exceptions in threads) print a
+    traceback to stderr, which lands in the terminal after the scan summary.
+    Both are replaced, for the life of the process, with hooks that log the
+    report at WARNING on ``strix.telemetry`` instead: it goes to strix.log,
+    and to stderr only when the stream handler runs at DEBUG (STRIX_DEBUG=1).
+    """
+    global _hooks_installed  # noqa: PLW0603
+    if _hooks_installed:
         return
-    _unraisable_hook_installed = True
-    previous = sys.unraisablehook
+    _hooks_installed = True
 
-    def hook(unraisable: sys.UnraisableHookArgs) -> None:
-        if _is_urllib3_closed_file_noise(unraisable):
-            with contextlib.suppress(Exception):  # the interpreter may be finalizing
-                logging.getLogger("strix.telemetry").debug(
-                    "Ignored HTTP response finalizer error: %s: %s",
-                    unraisable.err_msg or type(unraisable.object).__name__,
-                    unraisable.exc_value,
-                )
+    def unraisable_hook(unraisable: sys.UnraisableHookArgs) -> None:
+        with contextlib.suppress(BaseException):
+            subject = unraisable.err_msg or f"Exception ignored in {unraisable.object!r}"
+            _log_quietly(
+                "%s\n%s",
+                subject,
+                _format_exception(
+                    unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback
+                ),
+            )
+
+    def thread_hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
             return
-        previous(unraisable)
+        with contextlib.suppress(BaseException):
+            name = args.thread.name if args.thread is not None else "-"
+            _log_quietly(
+                "Exception in thread %s\n%s",
+                name,
+                _format_exception(args.exc_type, args.exc_value, args.exc_traceback),
+            )
 
-    sys.unraisablehook = hook
+    sys.unraisablehook = unraisable_hook
+    threading.excepthook = thread_hook
 
 
 class _CurrentStderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
