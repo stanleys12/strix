@@ -11,20 +11,26 @@ would let it escape and surface a traceback on every teardown.
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agents.sandbox.sandboxes.docker import DockerSandboxClient
+from agents.sandbox.manifest import Manifest
+from agents.sandbox.sandboxes.docker import (
+    DockerSandboxClient,
+    DockerSandboxSession,
+    DockerSandboxSessionState,
+    _DockerExecSocket,
+    _DockerPtyProcessEntry,
+)
+from agents.sandbox.session.sandbox_session import SandboxSession
 from docker import errors as docker_errors
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from strix.runtime.docker_client import StrixDockerSandboxClient
-
-
-if TYPE_CHECKING:
-    from agents.sandbox.session.sandbox_session import SandboxSession
 
 
 def _client_with_kill_error(exc: Exception) -> StrixDockerSandboxClient:
@@ -134,3 +140,65 @@ async def test_delete_survives_pty_termination_errors() -> None:
         await client.delete(session)
 
     super_delete.assert_awaited_once()
+
+
+def _real_session_with_open_pty(
+    container_id: str = "abc123",
+) -> tuple[SandboxSession, _DockerExecSocket]:
+    """A real SDK DockerSandboxSession holding one live PTY exec stream, the
+    shape exec_command leaves behind: a hijacked socket plus the streamed HTTP
+    response docker-py pins to it."""
+    state = DockerSandboxSessionState.model_construct(
+        type="docker",
+        image="sandbox:test",
+        container_id=container_id,
+        manifest=Manifest(),
+        session_id=uuid.uuid4(),
+        exposed_ports=(),
+        workspace_root_ready=True,
+    )
+    container = MagicMock()
+    container.client.api.exec_inspect.return_value = {"Running": False, "ExitCode": 0}
+    inner = DockerSandboxSession(docker_client=MagicMock(), container=container, state=state)
+    exec_socket = _DockerExecSocket(sock=MagicMock(), raw_sock=MagicMock(), response=MagicMock())
+    inner._pty_processes[1] = _DockerPtyProcessEntry(
+        exec_id="exec-1",
+        sock=exec_socket,
+        raw_sock=exec_socket.raw_sock,
+        pid_path=Path("/workspace/.pty/1.pid"),
+        tty=True,
+    )
+    return SandboxSession(inner), exec_socket
+
+
+@pytest.mark.asyncio
+async def test_sdk_delete_alone_leaves_pty_exec_streams_open_when_the_container_is_gone() -> None:
+    """Documents the SDK gap delete() compensates for: with the container gone,
+    DockerSandboxClient.delete() never terminates the PTY entries."""
+    client = StrixDockerSandboxClient.__new__(StrixDockerSandboxClient)
+    client.docker_client = MagicMock()
+    client.docker_client.containers.get.side_effect = docker_errors.NotFound("gone")
+    session, exec_socket = _real_session_with_open_pty()
+
+    await DockerSandboxClient.delete(client, session)
+
+    assert session._inner._pty_processes  # type: ignore[attr-defined]
+    cast("MagicMock", exec_socket.sock).close.assert_not_called()
+    cast("MagicMock", exec_socket.response).close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_closes_real_pty_exec_streams_when_the_container_is_gone() -> None:
+    """End to end through the real SDK session and the real SDK delete(): the
+    exec socket and its pinned HTTP response are closed, so nothing is left for
+    the garbage collector at interpreter exit."""
+    client = StrixDockerSandboxClient.__new__(StrixDockerSandboxClient)
+    client.docker_client = MagicMock()
+    client.docker_client.containers.get.side_effect = docker_errors.NotFound("gone")
+    session, exec_socket = _real_session_with_open_pty()
+
+    await client.delete(session)
+
+    assert not session._inner._pty_processes  # type: ignore[attr-defined]
+    cast("MagicMock", exec_socket.sock).close.assert_called_once()
+    cast("MagicMock", exec_socket.response).close.assert_called_once()

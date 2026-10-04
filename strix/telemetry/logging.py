@@ -95,7 +95,6 @@ def configure_dependency_logging() -> None:
 _unraisable_hook_installed = False
 
 
-_FINALIZER_NOISE_MODULES = frozenset({"urllib3", "http"})
 _FINALIZER_FILE_RE = re.compile(r"finalizing file <(urllib3|http\.client)\.")
 
 
@@ -112,7 +111,8 @@ def _is_urllib3_closed_file_noise(unraisable: sys.UnraisableHookArgs) -> bool:
     ):
         return False
     if unraisable.object is not None:
-        return type(unraisable.object).__module__.split(".")[0] in _FINALIZER_NOISE_MODULES
+        module = type(unraisable.object).__module__
+        return module.split(".")[0] == "urllib3" or module == "http.client"
     return _FINALIZER_FILE_RE.search(unraisable.err_msg or "") is not None
 
 

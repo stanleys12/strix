@@ -1,4 +1,5 @@
 import http.client
+import http.cookiejar
 import socket
 import sys
 
@@ -27,6 +28,11 @@ def _urllib3_response() -> urllib3.response.HTTPResponse:
 def test_filters_urllib3_closed_file_noise() -> None:
     args = _Args(ValueError("I/O operation on closed file."), _urllib3_response())
     assert _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
+
+
+def test_ignores_closed_file_errors_from_other_http_modules() -> None:
+    args = _Args(ValueError("I/O operation on closed file."), http.cookiejar.CookieJar())
+    assert not _is_urllib3_closed_file_noise(args)  # type: ignore[arg-type]
 
 
 def test_filters_http_client_closed_file_noise() -> None:
