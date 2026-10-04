@@ -58,7 +58,7 @@ def resolve_docker_endpoint(environ: dict[str, str] | None = None) -> DockerEndp
     if host:
         return DockerEndpoint(host, "DOCKER_HOST")
 
-    name = env.get("DOCKER_CONTEXT", "").strip() or get_current_context_name()
+    name = get_current_context_name()
     if name != DEFAULT_CONTEXT:
         try:
             context = ContextAPI.get_context(name)

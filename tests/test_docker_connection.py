@@ -51,22 +51,6 @@ def test_current_context_is_used_like_the_cli(monkeypatch: pytest.MonkeyPatch) -
     assert endpoint.source == "docker context 'desktop-linux'"
 
 
-def test_docker_context_env_overrides_the_config_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "default")
-    seen: list[str] = []
-
-    def get_context(name: str) -> SimpleNamespace:
-        seen.append(name)
-        return SimpleNamespace(Host="unix:///run/orbstack.sock", TLSConfig=None)
-
-    monkeypatch.setattr("strix.runtime.docker_connection.ContextAPI.get_context", get_context)
-    assert (
-        resolve_docker_endpoint({"DOCKER_CONTEXT": "orbstack"}).source
-        == "docker context 'orbstack'"
-    )
-    assert seen == ["orbstack"]
-
-
 def test_default_and_broken_contexts_fall_back_to_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "default")
     assert resolve_docker_endpoint({}) == DockerEndpoint(None, "default socket")
