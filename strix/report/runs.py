@@ -72,8 +72,8 @@ def _describe_target(record: dict[str, Any]) -> str:
     mount = record.get("workspace_mount")
     if isinstance(mount, str) and mount:
         return f"{mount} (workspace)"
-    instruction = record.get("user_instruction") or record.get("instruction")
-    return str(instruction or "").strip().splitlines()[0] if instruction else ""
+    instruction = str(record.get("user_instruction") or record.get("instruction") or "").strip()
+    return instruction.splitlines()[0] if instruction else ""
 
 
 def _load_json(path: Path, *, default: Any) -> Any:

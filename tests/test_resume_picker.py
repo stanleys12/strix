@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import os
+import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -18,6 +20,7 @@ from strix.interface.resume_picker import (
     ResumePicker,
     filter_runs,
     pick_run,
+    read_raw_key,
     relative_time,
     translate_key,
 )
@@ -219,3 +222,39 @@ def test_pick_run_needs_a_terminal() -> None:
     console, _ = _console()
     with pytest.raises(PickerUnavailableError):
         pick_run(RUNS, runs_dir="strix_runs", console=console, stdin=io.StringIO())
+
+
+def test_narrow_terminals_never_wrap_a_row() -> None:
+    console, _ = _console(width=48)
+    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    for line in picker.render():
+        assert len(line.plain) <= 47, line.plain
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX key reader")
+def test_posix_key_reader_handles_multibyte_and_arrows() -> None:
+    master, slave = os.openpty()
+    try:
+        with os.fdopen(slave, "r+b", buffering=0) as stream:
+            os.write(master, "\u00e9".encode())
+            assert read_raw_key(stream) == "\u00e9"  # type: ignore[arg-type]
+            os.write(master, b"\x1b[B")
+            assert read_raw_key(stream) == KEY_DOWN  # type: ignore[arg-type]
+            os.write(master, b"\x1b[6~")
+            assert read_raw_key(stream) == "pagedown"  # type: ignore[arg-type]
+            os.write(master, b"\r")
+            assert translate_key(read_raw_key(stream)) == KEY_ENTER  # type: ignore[arg-type]
+    finally:
+        os.close(master)
+
+
+def test_tall_terminals_still_show_a_short_window() -> None:
+    console, _ = _console(height=60)
+    runs = [
+        _run(f"run_{index:02d}", f"https://host{index}.example", minutes_ago=index)
+        for index in range(40)
+    ]
+    picker = ResumePicker(runs, console=console, runs_dir="strix_runs", now=NOW)
+    plain = [line.plain for line in picker.render()]
+    assert sum(1 for line in plain if "run_" in line) == 8
+    assert any("more below" in line for line in plain)

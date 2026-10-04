@@ -12,6 +12,8 @@ from strix.report.runs import list_run_summaries
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def _write_run(
     base: Path,
@@ -122,3 +124,18 @@ def test_runs_without_agent_state_or_with_a_broken_record_are_listed_not_resumab
 
 def test_missing_runs_dir_lists_nothing(tmp_path: Path) -> None:
     assert list_run_summaries(cwd=tmp_path) == []
+
+
+def test_blank_instruction_does_not_break_the_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    run_dir = tmp_path / "strix_runs" / "blank_0001"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps({"status": "completed", "instruction": "  \n  "}), encoding="utf-8"
+    )
+
+    [summary] = list_run_summaries()
+
+    assert summary.target == ""

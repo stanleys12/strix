@@ -51,8 +51,20 @@ def test_bare_resume_defers_to_the_picker(tmp_path: Path, monkeypatch: pytest.Mo
     assert args.resume is None
     assert args.resume_picker is True
     assert args.needs_setup is False
-    assert args.resume is None
     assert args.targets_info == []
+
+
+def test_bare_resume_keeps_the_new_instruction_as_resume_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run(tmp_path / "strix_runs", "example-com_1111")
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "--instruction", "focus on auth"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.resume_picker is True
+    assert args.user_explicit_instruction == "focus on auth"
 
 
 def test_bare_resume_with_no_runs_is_an_error(

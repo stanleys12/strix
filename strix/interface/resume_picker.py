@@ -82,6 +82,18 @@ _FINDINGS_WIDTH = 8
 _MIN_TARGET_WIDTH = 12
 _MAX_RUN_WIDTH = 40
 _CHROME_LINES = 8
+_MAX_VISIBLE = 8
+
+
+def _utf8_length(lead: bytes) -> int:
+    byte = lead[0] if lead else 0
+    if byte >= 0xF0:
+        return 4
+    if byte >= 0xE0:
+        return 3
+    if byte >= 0xC0:
+        return 2
+    return 1
 
 
 class PickerUnavailableError(RuntimeError):
@@ -106,8 +118,9 @@ else:
         fd = stream.fileno()
         saved = termios.tcgetattr(fd)
         try:
-            tty.setcbreak(fd)
-            char = os.read(fd, 1).decode("utf-8", "replace")
+            tty.setcbreak(fd, termios.TCSANOW)
+            first = os.read(fd, 1)
+            char = (first + os.read(fd, _utf8_length(first) - 1)).decode("utf-8", "replace")
             if char != "\x1b":
                 return char
             sequence = ""
@@ -200,7 +213,7 @@ class ResumePicker:
         return filter_runs(self.runs, self.filter)
 
     def _visible(self) -> int:
-        return max(3, min(len(self.rows), self.console.height - _CHROME_LINES))
+        return max(3, min(len(self.rows), _MAX_VISIBLE, self.console.height - _CHROME_LINES))
 
     def _columns(self) -> tuple[int, int, int]:
         width = max(40, self.console.width - 1)
@@ -256,6 +269,8 @@ class ResumePicker:
                 "\u2191\u2193 move   enter resume   type to search   esc cancel", style="dim"
             )
         lines.extend([Text(), footer])
+        for line in lines:
+            line.truncate(self.console.width - 1)
         return lines
 
     @staticmethod

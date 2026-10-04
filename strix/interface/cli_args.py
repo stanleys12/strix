@@ -365,7 +365,7 @@ Strix Cloud:
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
 
-    args.user_explicit_instruction = args.instruction if args.resume else None
+    args.user_explicit_instruction = args.instruction if args.resume is not None else None
     # What the user actually asked for, kept apart from args.instruction because
     # prepare_run prepends the diff-scope preamble to that. This is the text the
     # transcript shows as their opening message.
