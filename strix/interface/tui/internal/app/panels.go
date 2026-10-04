@@ -34,6 +34,9 @@ type panelRect struct {
 }
 
 func (m Model) panelShrunk(panel sidebarPanel) bool {
+	if panel == panelStats {
+		return false
+	}
 	return m.collapsedPanels[panel] || (m.zoomedPanel != panelNone && m.zoomedPanel != panel)
 }
 
@@ -70,7 +73,13 @@ func (m Model) sidebarPanels() []panelRect {
 		rects = append(rects, panelRect{panelMcp, top, mcpHeight})
 		top += mcpHeight
 	}
+	top += m.sidebarGap()
 	return append(rects, panelRect{panelStats, top, statsHeight})
+}
+
+func (m Model) sidebarGap() int {
+	statsHeight, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
+	return max(0, m.height-m.viewerHeight()-agentHeight-vulnHeight-mcpHeight-statsHeight)
 }
 
 func (m Model) panelAt(y int) (panelRect, bool) {
@@ -106,6 +115,9 @@ func (m Model) panelTitle(panel sidebarPanel) string {
 
 func (m Model) panelHeader(panel sidebarPanel, width int) string {
 	style := lipgloss.NewStyle().Foreground(dim)
+	if panel == panelStats {
+		return truncate(style.Render(m.panelTitle(panel)), max(1, width))
+	}
 	glyph := panelZoomGlyph
 	if m.zoomedPanel == panel {
 		glyph = panelUnzoomGlyph
@@ -116,7 +128,11 @@ func (m Model) panelHeader(panel sidebarPanel, width int) string {
 }
 
 func (m Model) collapsedPanelRow(panel sidebarPanel, width int) string {
-	label := lipgloss.NewStyle().Foreground(dim).Render(panelCollapsedGlyph + " " + m.panelTitle(panel))
+	title := m.panelTitle(panel)
+	if panel != panelStats {
+		title = panelCollapsedGlyph + " " + title
+	}
+	label := lipgloss.NewStyle().Foreground(dim).Render(title)
 	return " " + truncate(label, max(1, width-1))
 }
 
@@ -138,7 +154,9 @@ func (m Model) panelBox(panel sidebarPanel, body string, width, height int, focu
 
 const (
 	toggleButtonWidth = 3
-	sidebarRailWidth  = toggleButtonWidth + 1
+	railButtonWidth   = 5
+	railButtonHeight  = 3
+	sidebarRailWidth  = railButtonWidth + 1
 )
 
 var toggleButtonFill = lipgloss.Color("#262626")
@@ -158,16 +176,24 @@ func (m Model) railVisible() bool {
 }
 
 func (m Model) sidebarRail(height int) string {
+	button := lipgloss.NewStyle().
+		Background(toggleButtonFill).
+		Foreground(brightWhite).
+		Bold(true).
+		Width(railButtonWidth).
+		Height(railButtonHeight).
+		Align(lipgloss.Center, lipgloss.Center).
+		Render(sidebarShowGlyph)
 	return lipgloss.NewStyle().
 		Width(sidebarRailWidth).
 		Height(height).
 		Align(lipgloss.Right).
-		Render(sidebarToggleButton(sidebarShowGlyph))
+		Render(button)
 }
 
 func (m Model) toggleButtonHit(x, y int) bool {
 	if m.railVisible() {
-		return y == 0 && x >= m.width-toggleButtonWidth
+		return y < railButtonHeight && x >= m.width-railButtonWidth
 	}
 	return y == 1 && x >= m.width-2-toggleButtonWidth && x < m.width-2
 }
@@ -220,6 +246,8 @@ func (m *Model) revealPanel(panel sidebarPanel) {
 
 func (m *Model) clickPanel(rect panelRect, x, y int) bool {
 	switch {
+	case rect.panel == panelStats:
+		return false
 	case rect.height <= 1 && !m.panelShrunk(rect.panel):
 		m.togglePanelZoom(rect.panel)
 	case rect.height <= 1:

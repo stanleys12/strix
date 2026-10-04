@@ -58,7 +58,7 @@ func TestSidebarPanelsRenderHeadersWithControls(t *testing.T) {
 	m := panelsModel(t)
 	_, sidebarWidth, _, _ := m.layout()
 	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
-	for _, want := range []string{"▾ Agents (31)", "▾ Findings (1)", "▾ MCP (12)", "▾ Model", "⤢"} {
+	for _, want := range []string{"▾ Agents (31)", "▾ Findings (1)", "▾ MCP (12)", "Model", "⤢"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sidebar missing %q:\n%s", want, view)
 		}
@@ -106,14 +106,14 @@ func TestClickingZoomGlyphGivesPanelTheSidebar(t *testing.T) {
 	if m.zoomedPanel != panelMcp {
 		t.Fatalf("zoom glyph click did not zoom the panel: %d", m.zoomedPanel)
 	}
-	for _, other := range []sidebarPanel{panelAgents, panelFindings, panelStats} {
+	for _, other := range []sidebarPanel{panelAgents, panelFindings} {
 		if got := panelRectOf(t, m, other).height; got != 1 {
 			t.Fatalf("panel %d should shrink to its header while another is zoomed, got %d", other, got)
 		}
 	}
 	zoomed := panelRectOf(t, m, panelMcp)
 	rects := m.sidebarPanels()
-	if last := rects[len(rects)-1]; last.top+last.height != m.height || zoomed.height < m.height-10 {
+	if last := rects[len(rects)-1]; last.top+last.height != m.height || zoomed.height < m.height-12 {
 		t.Fatalf("zoomed panel does not fill the sidebar: %+v screen=%d", rects, m.height)
 	}
 	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
@@ -160,14 +160,17 @@ func TestToggleButtonsHideAndShowSidebar(t *testing.T) {
 	}
 	frame := ansi.Strip(m.View())
 	rows = strings.Split(frame, "\n")
-	if !strings.HasSuffix(rows[0], " « ") || strings.Contains(rows[1], "«") || lipgloss.Width(rows[0]) != m.width {
-		t.Fatalf("hidden sidebar should leave a one-row show button in the rail:\n%s", strings.Join(rows[:2], "\n"))
+	if !strings.HasSuffix(rows[1], "  «  ") || strings.Contains(rows[0], "«") || strings.Contains(rows[3], "«") || lipgloss.Width(rows[0]) != m.width {
+		t.Fatalf("hidden sidebar should leave a %d-row show button in the rail:\n%s", railButtonHeight, strings.Join(rows[:4], "\n"))
+	}
+	if !m.toggleButtonHit(m.width-railButtonWidth, railButtonHeight-1) || m.toggleButtonHit(m.width-railButtonWidth-1, 0) || m.toggleButtonHit(m.width-1, railButtonHeight) {
+		t.Fatalf("show button hit zone does not match the drawn button")
 	}
 	if strings.Contains(frame, "»") {
 		t.Fatalf("hide button drawn while the sidebar is hidden")
 	}
 
-	m = click(t, m, m.width-3, 0)
+	m = click(t, m, m.width-3, 2)
 	if showSidebar, _, _, _ := m.layout(); !showSidebar {
 		t.Fatalf("show button click did not bring the sidebar back")
 	}
@@ -245,17 +248,60 @@ func TestSidebarFitsShortTerminal(t *testing.T) {
 	if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got > m.height {
 		t.Fatalf("sidebar renders %d rows on a %d-row terminal", got, m.height)
 	}
-	squeezed, ok := m.panelAt(last.top)
-	if !ok || squeezed.panel != panelStats || squeezed.height != 1 {
-		t.Fatalf("expected the stats panel squeezed to its header, got %+v", squeezed)
+	squeezed := panelRectOf(t, m, panelMcp)
+	if squeezed.height != 1 {
+		t.Fatalf("expected the MCP panel squeezed to its header, got %+v", squeezed)
 	}
-	m = click(t, m, m.width-6, last.top)
-	if m.zoomedPanel != panelStats {
+	if last.panel != panelStats || last.height < 3 {
+		t.Fatalf("Model panel must keep its box on short terminals: %+v", last)
+	}
+	m = click(t, m, m.width-6, squeezed.top)
+	if m.zoomedPanel != panelMcp {
 		t.Fatalf("clicking a squeezed header should zoom it, zoomed=%v", m.zoomedPanel)
 	}
-	statsHeight, _, _, _ := m.sidebarHeights()
-	if statsHeight < 4 {
-		t.Fatalf("zoomed stats panel still has no room: %d", statsHeight)
+}
+
+func TestModelPanelHasNoControlsAndNeverShrinks(t *testing.T) {
+	m := panelsModel(t)
+	_, sidebarWidth, _, _ := m.layout()
+	stats := panelRectOf(t, m, panelStats)
+	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
+	if header := rows[stats.top+1]; strings.ContainsAny(header, "▾▸⤢⤡") || !strings.Contains(header, "Model") {
+		t.Fatalf("Model header should carry no controls: %q", header)
+	}
+	before := m.sidebarPanels()
+	m = click(t, m, m.width-3, stats.top+1)
+	m = click(t, m, m.width-10, stats.top+1)
+	if m.zoomedPanel != panelNone || len(m.collapsedPanels) != 0 {
+		t.Fatalf("clicks on the Model header changed panel state: zoom=%v collapsed=%v", m.zoomedPanel, m.collapsedPanels)
+	}
+	m = click(t, m, m.width-3, panelRectOf(t, m, panelAgents).top+1)
+	if m.zoomedPanel != panelAgents {
+		t.Fatalf("precondition: agents zoomed")
+	}
+	after := panelRectOf(t, m, panelStats)
+	if after.height != before[len(before)-1].height {
+		t.Fatalf("Model panel shrank under zoom: %+v -> %+v", before[len(before)-1], after)
+	}
+}
+
+func TestModelPanelSticksToBottom(t *testing.T) {
+	m := panelsModel(t)
+	m = click(t, m, m.width-10, panelRectOf(t, m, panelAgents).top+1)
+	if !m.collapsedPanels[panelAgents] {
+		t.Fatalf("precondition: agents collapsed")
+	}
+	stats := panelRectOf(t, m, panelStats)
+	if stats.top+stats.height != m.height {
+		t.Fatalf("Model panel not at the bottom: %+v (height %d)", stats, m.height)
+	}
+	_, sidebarWidth, _, _ := m.layout()
+	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
+	if len(rows) != m.height {
+		t.Fatalf("sidebar renders %d rows, want %d", len(rows), m.height)
+	}
+	if !strings.Contains(rows[stats.top+1], "Model") {
+		t.Fatalf("Model header not where its rect says:\n%s", strings.Join(rows[stats.top-2:], "\n"))
 	}
 }
 

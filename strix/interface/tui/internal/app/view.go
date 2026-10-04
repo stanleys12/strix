@@ -580,6 +580,9 @@ func (m Model) sidebarView(width, height int) string {
 		}
 		parts = append(parts, m.panelBox(panelMcp, roster, width, mcpHeight, m.focus == focusMcp))
 	}
+	if gap := m.sidebarGap(); gap > 0 {
+		parts = append(parts, lipgloss.NewStyle().Width(width).Height(gap).Render(""))
+	}
 	stats := ""
 	if statsHeight > 1 {
 		stats = fixedPanelBody(lipgloss.NewStyle().Width(width-4).Render(m.statsView()), width-4, statsHeight-3)
@@ -604,8 +607,7 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 		mcpHeight = m.panelHeight(panelMcp, min(9, len(m.snapshot.Connections)+3))
 	}
 	agentHeight = m.panelHeight(panelAgents, 4)
-	squeezable := []*int{&statsHeight, &mcpHeight, &vulnHeight}
-	for _, h := range squeezable {
+	for _, h := range []*int{&statsHeight, &mcpHeight, &vulnHeight} {
 		over := m.viewerHeight() + statsHeight + vulnHeight + mcpHeight + agentHeight - m.height
 		if over <= 0 {
 			break
@@ -614,7 +616,7 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 			*h -= min(over, *h-4)
 		}
 	}
-	for _, h := range squeezable {
+	for _, h := range []*int{&mcpHeight, &vulnHeight, &statsHeight} {
 		if m.viewerHeight()+statsHeight+vulnHeight+mcpHeight+agentHeight <= m.height {
 			break
 		}
@@ -628,8 +630,6 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 		vulnHeight += spare
 	case m.zoomedPanel == panelMcp && mcpHeight > 1:
 		mcpHeight += spare
-	case m.zoomedPanel == panelStats && statsHeight > 1:
-		statsHeight += spare
 	case agentHeight > 1:
 		agentHeight += spare
 	}
