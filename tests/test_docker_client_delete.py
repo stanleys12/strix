@@ -36,9 +36,17 @@ def _client_with_kill_error(exc: Exception) -> StrixDockerSandboxClient:
     return client
 
 
-def _session(container_id: str | None = "abc123") -> SandboxSession:
-    # delete() reads session._inner.state.container_id
-    fake = SimpleNamespace(_inner=SimpleNamespace(state=SimpleNamespace(container_id=container_id)))
+def _session(
+    container_id: str | None = "abc123", pty_terminate_all: AsyncMock | None = None
+) -> SandboxSession:
+    # delete() reads the inner state's container_id and awaits the inner
+    # session's PTY teardown.
+    fake = SimpleNamespace(
+        _inner=SimpleNamespace(
+            state=SimpleNamespace(container_id=container_id),
+            pty_terminate_all=pty_terminate_all or AsyncMock(),
+        )
+    )
     return cast("SandboxSession", fake)
 
 
@@ -89,4 +97,40 @@ async def test_delete_noop_without_container_id() -> None:
         await client.delete(session)
 
     client.docker_client.containers.get.assert_not_called()
+    super_delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_terminates_pty_streams_even_when_the_container_is_gone() -> None:
+    """The SDK's delete() skips shutdown() (and with it PTY teardown) when the
+    container no longer exists, which leaves the agent's exec sockets to the
+    garbage collector. delete() must terminate them itself, before anything
+    else, whatever the container's state."""
+    client = _client_with_kill_error(docker_errors.NotFound("gone"))
+    order: list[str] = []
+    session = _session(
+        pty_terminate_all=AsyncMock(side_effect=lambda: order.append("pty_terminate_all"))
+    )
+
+    async def _super_delete(_self: object, _session: object) -> SandboxSession:
+        order.append("super.delete")
+        return session
+
+    with patch.object(DockerSandboxClient, "delete", new=_super_delete):
+        await client.delete(session)
+
+    assert order == ["pty_terminate_all", "super.delete"]
+
+
+@pytest.mark.asyncio
+async def test_delete_survives_pty_termination_errors() -> None:
+    client = StrixDockerSandboxClient.__new__(StrixDockerSandboxClient)
+    client.docker_client = MagicMock()
+    session = _session(pty_terminate_all=AsyncMock(side_effect=RuntimeError("daemon gone")))
+
+    with patch.object(
+        DockerSandboxClient, "delete", new=AsyncMock(return_value=session)
+    ) as super_delete:
+        await client.delete(session)
+
     super_delete.assert_awaited_once()

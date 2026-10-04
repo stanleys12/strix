@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import sys
 import warnings
 from contextvars import ContextVar
@@ -94,12 +95,25 @@ def configure_dependency_logging() -> None:
 _unraisable_hook_installed = False
 
 
+_FINALIZER_NOISE_MODULES = frozenset({"urllib3", "http"})
+_FINALIZER_FILE_RE = re.compile(r"finalizing file <(urllib3|http\.client)\.")
+
+
 def _is_urllib3_closed_file_noise(unraisable: sys.UnraisableHookArgs) -> bool:
-    return (
+    """An HTTP response (urllib3 or http.client) whose socket was closed first.
+
+    Python 3.14 reports IOBase finalizer failures with ``object=None`` and the
+    object's repr inside ``err_msg`` ("Exception ignored while finalizing file
+    <...>"); earlier versions pass the object itself.
+    """
+    if not (
         isinstance(unraisable.exc_value, ValueError)
         and "I/O operation on closed file" in str(unraisable.exc_value)
-        and type(unraisable.object).__module__.split(".")[0] == "urllib3"
-    )
+    ):
+        return False
+    if unraisable.object is not None:
+        return type(unraisable.object).__module__.split(".")[0] in _FINALIZER_NOISE_MODULES
+    return _FINALIZER_FILE_RE.search(unraisable.err_msg or "") is not None
 
 
 def _silence_urllib3_finalizer_noise() -> None:
@@ -111,6 +125,12 @@ def _silence_urllib3_finalizer_noise() -> None:
 
     def hook(unraisable: sys.UnraisableHookArgs) -> None:
         if _is_urllib3_closed_file_noise(unraisable):
+            with contextlib.suppress(Exception):  # the interpreter may be finalizing
+                logging.getLogger("strix.telemetry").debug(
+                    "Ignored HTTP response finalizer error: %s: %s",
+                    unraisable.err_msg or type(unraisable.object).__name__,
+                    unraisable.exc_value,
+                )
             return
         previous(unraisable)
 
