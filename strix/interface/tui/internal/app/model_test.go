@@ -959,6 +959,17 @@ func TestFillBackgroundRestoresBaseForegroundAfterReset(t *testing.T) {
 	}
 }
 
+func TestFillBackgroundRestoresBaseColorsAfterBareReset(t *testing.T) {
+	view := "\x1b[38;2;115;115;115mModel\x1b[m   padding\x1b[0m"
+	filled := fillBackground(view)
+	if !strings.Contains(filled, "\x1b[m"+baseFrameColors+"   padding") {
+		t.Fatalf("base colors not restored after bare reset: %q", filled)
+	}
+	if strings.Contains(filled, "\x1b[m   ") {
+		t.Fatalf("cells after a bare reset show the terminal background: %q", filled)
+	}
+}
+
 func TestMainTraceTreeAndFindingsRenderScrollbars(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 150, 35
