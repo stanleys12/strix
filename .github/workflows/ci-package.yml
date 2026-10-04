@@ -70,7 +70,7 @@ jobs:
           mkdir -p /tmp/target && echo 'print("hi")' > /tmp/target/app.py
           STRIX_LLM=vertex_ai/gemini-2.5-pro dist/strix -n -t /tmp/target --scan-mode quick > vertex.log 2>&1 || true
           grep -q "DefaultCredentialsError" vertex.log
-          ! grep -q "No module named" vertex.log
+          if grep -q "No module named" vertex.log; then exit 1; fi
           STRIX_LLM=bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0 dist/strix -n -t /tmp/target --scan-mode quick > bedrock.log 2>&1 || true
           grep -q "Unable to locate credentials" bedrock.log
-          ! grep -q "No module named" bedrock.log
+          if grep -q "No module named" bedrock.log; then exit 1; fi
