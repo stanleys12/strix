@@ -6,7 +6,6 @@ import contextlib
 import logging
 import os
 import sys
-import threading
 import warnings
 from contextvars import ContextVar
 from pathlib import Path  # noqa: TC003  used at runtime by ``setup_scan_logging``
@@ -89,34 +88,20 @@ def configure_dependency_logging() -> None:
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").propagate = False
     warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
-    _route_hook_exceptions_to_log()
+    _route_unraisable_to_log()
 
 
-def _route_hook_exceptions_to_log() -> None:
-    """Python prints finalizer and thread tracebacks to stderr; send them to strix.log instead.
-
-    Dropped when the strix loggers have no handler (after scan teardown)
-    rather than left to ``logging.lastResort``, and any failure inside the
-    hook is swallowed: the interpreter may be shutting down.
-    """
-
-    def log(message: str, exc_info: tuple[object, object, object]) -> None:
+def _route_unraisable_to_log() -> None:
+    def hook(u: sys.UnraisableHookArgs) -> None:
         with contextlib.suppress(BaseException):
             logger = logging.getLogger("strix.telemetry")
             if logger.hasHandlers():
-                logger.warning(message, exc_info=exc_info)  # type: ignore[arg-type]
+                logger.warning(
+                    u.err_msg or f"Exception ignored in {u.object!r}",
+                    exc_info=(u.exc_type, u.exc_value, u.exc_traceback),  # type: ignore[arg-type]
+                )
 
-    def unraisable_hook(u: sys.UnraisableHookArgs) -> None:
-        log(
-            u.err_msg or f"Exception ignored in {u.object!r}",
-            (u.exc_type, u.exc_value, u.exc_traceback),
-        )
-
-    def thread_hook(a: threading.ExceptHookArgs) -> None:
-        log(f"Exception in thread {a.thread}", (a.exc_type, a.exc_value, a.exc_traceback))
-
-    sys.unraisablehook = unraisable_hook
-    threading.excepthook = thread_hook
+    sys.unraisablehook = hook
 
 
 class _CurrentStderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
