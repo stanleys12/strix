@@ -220,6 +220,8 @@ func (m *Model) revealPanel(panel sidebarPanel) {
 
 func (m *Model) clickPanel(rect panelRect, x, y int) bool {
 	switch {
+	case rect.height <= 1 && !m.panelShrunk(rect.panel):
+		m.togglePanelZoom(rect.panel)
 	case rect.height <= 1:
 		m.revealPanel(rect.panel)
 	case y-rect.top != 1:

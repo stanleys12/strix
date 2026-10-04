@@ -230,3 +230,45 @@ func TestScrollbarHitTestFollowsPanelState(t *testing.T) {
 		t.Fatalf("collapsed panel still reports a scrollbar")
 	}
 }
+
+func TestSidebarFitsShortTerminal(t *testing.T) {
+	m := panelsModel(t)
+	m.height = 19
+	m.snapshot.Connections = m.snapshot.Connections[:1]
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	rects := m.sidebarPanels()
+	last := rects[len(rects)-1]
+	if last.top+last.height > m.height {
+		t.Fatalf("panels run past the screen: %+v (height %d)", rects, m.height)
+	}
+	if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got > m.height {
+		t.Fatalf("sidebar renders %d rows on a %d-row terminal", got, m.height)
+	}
+	squeezed, ok := m.panelAt(last.top)
+	if !ok || squeezed.panel != panelStats || squeezed.height != 1 {
+		t.Fatalf("expected the stats panel squeezed to its header, got %+v", squeezed)
+	}
+	m = click(t, m, m.width-6, last.top)
+	if m.zoomedPanel != panelStats {
+		t.Fatalf("clicking a squeezed header should zoom it, zoomed=%v", m.zoomedPanel)
+	}
+	statsHeight, _, _, _ := m.sidebarHeights()
+	if statsHeight < 4 {
+		t.Fatalf("zoomed stats panel still has no room: %d", statsHeight)
+	}
+}
+
+func TestStatsPanelKeepsAssignedHeight(t *testing.T) {
+	m := panelsModel(t)
+	m.snapshot.Model = strings.Repeat("openrouter/some-vendor/a-very-long-model-name ", 12)
+	m.resizeViewport()
+	_, sidebarWidth, _, _ := m.layout()
+	statsHeight, _, _, _ := m.sidebarHeights()
+	if statsHeight != 15 {
+		t.Fatalf("stats panel should hit its cap, got %d", statsHeight)
+	}
+	if got := lipgloss.Height(m.sidebarView(sidebarWidth, m.height)); got != m.height {
+		t.Fatalf("sidebar renders %d rows, want %d", got, m.height)
+	}
+}

@@ -582,7 +582,7 @@ func (m Model) sidebarView(width, height int) string {
 	}
 	stats := ""
 	if statsHeight > 1 {
-		stats = m.statsView()
+		stats = fixedPanelBody(lipgloss.NewStyle().Width(width-4).Render(m.statsView()), width-4, statsHeight-3)
 	}
 	parts = append(parts, m.panelBox(panelStats, stats, width, statsHeight, false))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -603,7 +603,25 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 	if len(m.snapshot.Connections) > 0 {
 		mcpHeight = m.panelHeight(panelMcp, min(9, len(m.snapshot.Connections)+3))
 	}
-	agentHeight = m.panelHeight(panelAgents, 3)
+	agentHeight = m.panelHeight(panelAgents, 4)
+	squeezable := []*int{&statsHeight, &mcpHeight, &vulnHeight}
+	for _, h := range squeezable {
+		over := m.viewerHeight() + statsHeight + vulnHeight + mcpHeight + agentHeight - m.height
+		if over <= 0 {
+			break
+		}
+		if *h > 4 {
+			*h -= min(over, *h-4)
+		}
+	}
+	for _, h := range squeezable {
+		if m.viewerHeight()+statsHeight+vulnHeight+mcpHeight+agentHeight <= m.height {
+			break
+		}
+		if *h > 1 {
+			*h = 1
+		}
+	}
 	spare := max(0, m.height-m.viewerHeight()-statsHeight-vulnHeight-mcpHeight-agentHeight)
 	switch {
 	case m.zoomedPanel == panelFindings && vulnHeight > 1:
