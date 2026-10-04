@@ -15,8 +15,14 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import codex, load_settings, persist_current
-from strix.core.paths import run_dir_for
-from strix.interface.cli_args import FAIL_ON_SEVERITIES, parse_arguments
+from strix.core.paths import RUNS_DIR_NAME, run_dir_for
+from strix.interface.cli_args import (
+    FAIL_ON_SEVERITIES,
+    ResumeError,
+    load_resume_state,
+    parse_arguments,
+    resume_run_list_message,
+)
 from strix.interface.environment import (
     check_docker_installed,
     pull_docker_image,
@@ -391,6 +397,33 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console.print()
 
 
+def _print_cli_error(message: str) -> None:
+    Console(stderr=True, soft_wrap=True).print(
+        f"strix: error: {message}", markup=False, highlight=False
+    )
+
+
+def _pick_run_to_resume(args: argparse.Namespace) -> None:
+    """A bare --resume: let the user pick a run, then load it like --resume <name>."""
+    from strix.interface.resume_picker import PickerUnavailableError, pick_run
+    from strix.report.runs import list_run_summaries
+
+    try:
+        chosen = pick_run(list_run_summaries(), runs_dir=RUNS_DIR_NAME)
+    except PickerUnavailableError as exc:
+        _print_cli_error(resume_run_list_message(f"{exc}."))
+        sys.exit(2)
+    if chosen is None:
+        Console().print("No run selected.", style="dim")
+        sys.exit(0)
+    args.resume = chosen.run_name
+    try:
+        load_resume_state(args)
+    except ResumeError as exc:
+        _print_cli_error(str(exc))
+        sys.exit(2)
+
+
 def _bootstrap_scan(args: argparse.Namespace) -> None:
     """Warm up the model and prepare the run before the interface starts.
 
@@ -474,6 +507,9 @@ def main() -> None:
         if is_binary_install() and sys.platform != "win32":
             restart_after_update()
         sys.exit(0)
+
+    if args.resume_picker:
+        _pick_run_to_resume(args)
 
     check_docker_installed()
     pull_docker_image()

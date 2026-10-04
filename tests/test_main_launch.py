@@ -13,11 +13,14 @@ cli_main: Any = importlib.import_module("strix.interface.main")
 report_state_module: Any = importlib.import_module("strix.report.state")
 
 
-def _launch(monkeypatch: pytest.MonkeyPatch, *, needs_setup: bool) -> list[str]:
+def _launch(
+    monkeypatch: pytest.MonkeyPatch, *, needs_setup: bool, resume_picker: bool = False
+) -> list[str]:
     calls: list[str] = []
     args = argparse.Namespace(
         non_interactive=False,
         needs_setup=needs_setup,
+        resume_picker=resume_picker,
         run_name=None,
         fail_on=None,
     )
@@ -36,6 +39,7 @@ def _launch(monkeypatch: pytest.MonkeyPatch, *, needs_setup: bool) -> list[str]:
     monkeypatch.setattr(cli_main, "validate_environment", lambda: None)
     monkeypatch.setattr(cli_main, "wait_for_import_warmup", lambda: None)
     monkeypatch.setattr(cli_main, "_bootstrap_scan", lambda _args: calls.append("bootstrap"))
+    monkeypatch.setattr(cli_main, "_pick_run_to_resume", lambda _args: calls.append("pick"))
     monkeypatch.setattr(cli_main, "run_tui", run_tui)
     monkeypatch.setattr(cli_main, "notify_update", lambda _console: None)
 
@@ -51,6 +55,14 @@ def test_start_screen_launch_defers_the_model_check_to_the_tui(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _launch(monkeypatch, needs_setup=True) == ["tui"]
+
+
+def test_bare_resume_picks_a_run_before_the_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _launch(monkeypatch, needs_setup=False, resume_picker=True) == [
+        "pick",
+        "bootstrap",
+        "tui",
+    ]
 
 
 def test_direct_launch_with_a_bad_key_prints_the_panel_and_exits_before_the_tui(
@@ -84,7 +96,7 @@ def test_tui_startup_failure_marks_the_prepared_run_failed(monkeypatch: pytest.M
     calls: list[str] = []
     report_state = SimpleNamespace(cleanup=lambda status: calls.append(f"cleanup:{status}"))
     args = argparse.Namespace(
-        non_interactive=False, needs_setup=False, run_name="run", fail_on=None
+        non_interactive=False, needs_setup=False, resume_picker=False, run_name="run", fail_on=None
     )
 
     async def run_tui(_args: argparse.Namespace) -> None:
