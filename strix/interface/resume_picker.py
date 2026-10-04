@@ -331,7 +331,7 @@ class ResumePicker:
         """Apply one key: (done, run), where done with no run means cancelled."""
         self.notice = ""
         if key == KEY_INTERRUPT:
-            raise KeyboardInterrupt
+            return True, None
         if key == KEY_ESCAPE:
             if not self.filter:
                 return True, None
@@ -380,7 +380,11 @@ class ResumePicker:
         try:
             self.draw()
             while True:
-                done, chosen = self.handle(next_key())
+                try:
+                    key = next_key()
+                except KeyboardInterrupt:
+                    key = KEY_INTERRUPT
+                done, chosen = self.handle(key)
                 if done:
                     return chosen
                 self.draw()

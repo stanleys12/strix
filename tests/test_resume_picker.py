@@ -182,11 +182,6 @@ def test_no_match_renders_a_hint_and_enter_does_nothing() -> None:
     assert picker.handle(KEY_ENTER) == (False, None)
 
 
-def test_ctrl_c_raises_keyboard_interrupt() -> None:
-    with pytest.raises(KeyboardInterrupt):
-        _picker().handle(KEY_INTERRUPT)
-
-
 def test_long_lists_scroll_to_keep_the_cursor_visible() -> None:
     runs = [
         _run(f"run_{index:02d}", f"https://host{index}.example", minutes_ago=index)
@@ -216,6 +211,23 @@ def test_run_redraws_in_place_and_restores_the_cursor() -> None:
     assert output.endswith("\x1b[?25h")
     assert "\x1b[J" in output
     assert "example-com_223e" in output
+
+
+def test_ctrl_c_cancels_like_escape() -> None:
+    console, _ = _console()
+    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    assert picker.handle(KEY_INTERRUPT) == (True, None)
+
+
+def test_sigint_while_waiting_for_a_key_cancels_and_restores_the_cursor() -> None:
+    console, buffer = _console()
+    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+
+    def interrupted() -> str:
+        raise KeyboardInterrupt
+
+    assert picker.run(interrupted) is None
+    assert buffer.getvalue().endswith("\x1b[?25h")
 
 
 def test_pick_run_needs_a_terminal() -> None:
