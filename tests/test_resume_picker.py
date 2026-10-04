@@ -230,6 +230,20 @@ def test_sigint_while_waiting_for_a_key_cancels_and_restores_the_cursor() -> Non
     assert buffer.getvalue().endswith("\x1b[?25h")
 
 
+def test_sigint_while_drawing_cancels_and_restores_the_cursor() -> None:
+    console, buffer = _console()
+    picker = ResumePicker(RUNS, console=console, runs_dir="strix_runs", now=NOW)
+    draw = picker.draw
+
+    def interrupted_draw() -> None:
+        draw()
+        raise KeyboardInterrupt
+
+    picker.draw = interrupted_draw  # type: ignore[method-assign]
+    assert picker.run(lambda: KEY_DOWN) is None
+    assert buffer.getvalue().endswith("\x1b[?25h")
+
+
 def test_pick_run_needs_a_terminal() -> None:
     console, _ = _console()
     with pytest.raises(PickerUnavailableError):

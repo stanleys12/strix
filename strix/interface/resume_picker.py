@@ -380,14 +380,12 @@ class ResumePicker:
         try:
             self.draw()
             while True:
-                try:
-                    key = next_key()
-                except KeyboardInterrupt:
-                    key = KEY_INTERRUPT
-                done, chosen = self.handle(key)
+                done, chosen = self.handle(next_key())
                 if done:
                     return chosen
                 self.draw()
+        except KeyboardInterrupt:
+            return None
         finally:
             self.clear()
             self.console.file.write(_CURSOR_SHOW)
