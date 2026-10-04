@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 import threading
-import traceback
 import warnings
 from contextvars import ContextVar
 from pathlib import Path  # noqa: TC003  used at runtime by ``setup_scan_logging``
@@ -16,7 +15,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from types import TracebackType
 
 
 _SCAN_ID: ContextVar[str | None] = ContextVar("strix_scan_id", default=None)
@@ -94,70 +92,28 @@ def configure_dependency_logging() -> None:
     _route_hook_exceptions_to_log()
 
 
-_hooks_installed = False
-
-
-def _format_exception(
-    exc_type: type[BaseException] | None,
-    exc_value: BaseException | None,
-    exc_traceback: TracebackType | None,
-) -> str:
-    if exc_value is None and exc_type is None:
-        return "-"
-    return "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).rstrip()
-
-
-def _log_quietly(message: str, *args: object) -> None:
-    """Write a WARNING to the strix log; never let it reach the terminal.
-
-    Dropped (not printed) when the strix logger tree has no handler, which
-    is the case after scan teardown: ``logging.lastResort`` would otherwise
-    print it to stderr. The interpreter may be finalizing, so any failure
-    inside logging itself is swallowed too.
-    """
-    with contextlib.suppress(BaseException):
-        logger = logging.getLogger("strix.telemetry")
-        if logger.hasHandlers():
-            logger.warning(message, *args)
-
-
 def _route_hook_exceptions_to_log() -> None:
-    """Keep "Exception ignored in ..." reports and thread tracebacks off the terminal.
+    """Python prints finalizer and thread tracebacks to stderr; send them to strix.log instead.
 
-    Python's default ``sys.unraisablehook`` (finalizers, ``__del__``, GC and
-    weakref callbacks, buffered-file close at exit) and
-    ``threading.excepthook`` (uncaught exceptions in threads) print a
-    traceback to stderr, which lands in the terminal after the scan summary.
-    Both are replaced, for the life of the process, with hooks that log the
-    report at WARNING on ``strix.telemetry`` instead: it goes to strix.log,
-    and to stderr only when the stream handler runs at DEBUG (STRIX_DEBUG=1).
+    Dropped when the strix loggers have no handler (after scan teardown)
+    rather than left to ``logging.lastResort``, and any failure inside the
+    hook is swallowed: the interpreter may be shutting down.
     """
-    global _hooks_installed  # noqa: PLW0603
-    if _hooks_installed:
-        return
-    _hooks_installed = True
 
-    def unraisable_hook(unraisable: sys.UnraisableHookArgs) -> None:
+    def log(message: str, exc_info: tuple[object, object, object]) -> None:
         with contextlib.suppress(BaseException):
-            subject = unraisable.err_msg or f"Exception ignored in {unraisable.object!r}"
-            _log_quietly(
-                "%s\n%s",
-                subject,
-                _format_exception(
-                    unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback
-                ),
-            )
+            logger = logging.getLogger("strix.telemetry")
+            if logger.hasHandlers():
+                logger.warning(message, exc_info=exc_info)  # type: ignore[arg-type]
 
-    def thread_hook(args: threading.ExceptHookArgs) -> None:
-        if args.exc_type is SystemExit:
-            return
-        with contextlib.suppress(BaseException):
-            name = args.thread.name if args.thread is not None else "-"
-            _log_quietly(
-                "Exception in thread %s\n%s",
-                name,
-                _format_exception(args.exc_type, args.exc_value, args.exc_traceback),
-            )
+    def unraisable_hook(u: sys.UnraisableHookArgs) -> None:
+        log(
+            u.err_msg or f"Exception ignored in {u.object!r}",
+            (u.exc_type, u.exc_value, u.exc_traceback),
+        )
+
+    def thread_hook(a: threading.ExceptHookArgs) -> None:
+        log(f"Exception in thread {a.thread}", (a.exc_type, a.exc_value, a.exc_traceback))
 
     sys.unraisablehook = unraisable_hook
     threading.excepthook = thread_hook

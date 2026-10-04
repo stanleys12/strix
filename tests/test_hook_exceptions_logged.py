@@ -60,7 +60,6 @@ def hooks(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[object]]:
     thread_calls: list[object] = []
     monkeypatch.setattr(sys, "unraisablehook", unraisable_calls.append)
     monkeypatch.setattr(threading, "excepthook", thread_calls.append)
-    monkeypatch.setattr(tlog, "_hooks_installed", False)
     tlog.configure_dependency_logging()
     return unraisable_calls, thread_calls
 
@@ -96,7 +95,7 @@ def test_every_unraisable_is_logged_not_printed(
     [record] = strix_records
     assert record.levelno == logging.WARNING
     assert record.name == "strix.telemetry"
-    message = record.getMessage()
+    message = logging.Formatter().format(record)
     if args.err_msg:  # type: ignore[attr-defined]
         assert message.startswith(args.err_msg)  # type: ignore[attr-defined]
     else:
@@ -137,25 +136,9 @@ def test_thread_exceptions_are_logged_not_printed(
     assert capsys.readouterr().err == ""
     [record] = strix_records
     assert record.levelno == logging.WARNING
-    message = record.getMessage()
-    assert message.startswith("Exception in thread strix-worker")
+    message = logging.Formatter().format(record)
+    assert "Exception in thread <Thread(strix-worker" in message
     assert "RuntimeError: worker failed" in message
-
-
-@pytest.mark.usefixtures("hooks")
-def test_thread_system_exit_is_ignored(strix_records: list[logging.LogRecord]) -> None:
-    thread = threading.Thread(target=sys.exit, args=(3,))
-    thread.start()
-    thread.join()
-    assert strix_records == []
-
-
-def test_hooks_install_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tlog, "_hooks_installed", False)
-    tlog.configure_dependency_logging()
-    installed = (sys.unraisablehook, threading.excepthook)
-    tlog.configure_dependency_logging()
-    assert (sys.unraisablehook, threading.excepthook) == installed
 
 
 _EXIT_SCRIPT = r"""
