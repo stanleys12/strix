@@ -16,10 +16,11 @@ def _pyproject() -> dict[str, object]:
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 
-def test_google_auth_is_a_regular_dependency() -> None:
+@pytest.mark.parametrize("package", ["google-auth", "boto3"])
+def test_provider_packages_are_regular_dependencies(package: str) -> None:
     project = _pyproject()["project"]
     assert isinstance(project, dict)
-    assert any(req.startswith("google-auth") for req in project["dependencies"])
+    assert any(req.startswith(package) for req in project["dependencies"])
     assert "optional-dependencies" not in project
 
 

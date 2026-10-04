@@ -2389,6 +2389,7 @@ name = "strix-agent"
 version = "1.6.2"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "caido-sdk-client" },
     { name = "cryptography" },
     { name = "cvss" },
@@ -2422,6 +2423,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.28.0" },
     { name = "caido-sdk-client", specifier = ">=0.2.0" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
     { name = "cvss", specifier = ">=3.2" },
