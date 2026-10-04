@@ -51,17 +51,64 @@ def test_current_context_is_used_like_the_cli(monkeypatch: pytest.MonkeyPatch) -
     assert endpoint.source == "docker context 'desktop-linux'"
 
 
-def test_default_and_broken_contexts_fall_back_to_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_context_uses_the_sdk_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "default")
     assert resolve_docker_endpoint({}) == DockerEndpoint(None, "default socket")
 
-    monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "gone")
 
-    def boom(_name: str) -> SimpleNamespace:
-        raise ValueError("bad meta.json")
+def test_missing_or_broken_current_context_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(docker_connection, "get_current_context_name", lambda: "gone")
+    monkeypatch.setattr(
+        "strix.runtime.docker_connection.ContextAPI.get_context", lambda _name: None
+    )
+    with pytest.raises(
+        DockerConnectionError, match="docker context 'gone' is selected but does not exist"
+    ):
+        resolve_docker_endpoint({})
+
+    def boom(_name: str) -> None:
+        raise DockerException("bad meta.json")
 
     monkeypatch.setattr("strix.runtime.docker_connection.ContextAPI.get_context", boom)
-    assert resolve_docker_endpoint({}) == DockerEndpoint(None, "default socket")
+    with pytest.raises(DockerConnectionError, match="bad meta") as info:
+        resolve_docker_endpoint({})
+    assert info.value.endpoint.label == "docker context 'gone'"
+
+
+def test_docker_host_goes_through_from_env_so_tls_settings_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        docker_connection,
+        "resolve_docker_endpoint",
+        lambda _environ=None: DockerEndpoint("tcp://10.0.0.5:2376", "DOCKER_HOST"),
+    )
+    client = object()
+    monkeypatch.setattr("strix.runtime.docker_connection.docker.from_env", lambda: client)
+
+    def unexpected(**_kwargs: Any) -> None:
+        raise AssertionError("DOCKER_HOST must not bypass from_env")
+
+    monkeypatch.setattr("strix.runtime.docker_connection.docker.DockerClient", unexpected)
+    assert docker_connection.connect_docker() is client
+
+
+def test_context_endpoint_keeps_its_tls_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    tls = object()
+    monkeypatch.setattr(
+        docker_connection,
+        "resolve_docker_endpoint",
+        lambda _environ=None: DockerEndpoint("tcp://remote:2376", "docker context 'remote'", tls),
+    )
+    seen: dict[str, Any] = {}
+
+    def client(**kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "client"
+
+    monkeypatch.setattr("strix.runtime.docker_connection.docker.DockerClient", client)
+    assert docker_connection.connect_docker() == "client"
+    assert seen == {"base_url": "tcp://remote:2376", "tls": tls}
 
 
 @pytest.mark.parametrize(
@@ -78,7 +125,7 @@ def test_connect_docker_surfaces_the_root_cause(
     monkeypatch.setattr(
         docker_connection,
         "resolve_docker_endpoint",
-        lambda _environ=None: DockerEndpoint("unix:///nope.sock", "DOCKER_HOST"),
+        lambda _environ=None: DockerEndpoint("unix:///nope.sock", "docker context 'dead'"),
     )
 
     def dead_client(**_kwargs: Any) -> None:
@@ -117,7 +164,7 @@ def test_check_docker_connection_prints_endpoint_and_error_then_exits(
     assert exit_info.value.code == 1
     assert reported == [("docker_unavailable", PermissionError)]
     assert "DOCKER NOT AVAILABLE" in out
-    assert "default socket (default socket)" in out
+    assert "Cannot connect to Docker at default socket." in out
     assert "PermissionError: [Errno 13] Permission denied" in out
     assert "docker info" in out
 

@@ -33,7 +33,7 @@ class DockerEndpoint:
 
     @property
     def label(self) -> str:
-        return f"{self.host or 'default socket'} ({self.source})"
+        return f"{self.host} ({self.source})" if self.host else self.source
 
 
 class DockerConnectionError(RuntimeError):
@@ -59,22 +59,26 @@ def resolve_docker_endpoint(environ: dict[str, str] | None = None) -> DockerEndp
         return DockerEndpoint(host, "DOCKER_HOST")
 
     name = get_current_context_name()
-    if name != DEFAULT_CONTEXT:
-        try:
-            context = ContextAPI.get_context(name)
-        except Exception:  # noqa: BLE001 - a broken context file must not hide Docker itself
-            context = None
-        if context is not None and context.Host:
-            return DockerEndpoint(context.Host, f"docker context '{name}'", context.TLSConfig)
-    return DockerEndpoint(None, "default socket")
+    if name == DEFAULT_CONTEXT:
+        return DockerEndpoint(None, "default socket")
+
+    source = f"docker context '{name}'"
+    try:
+        context = ContextAPI.get_context(name)
+    except DockerException as exc:
+        raise DockerConnectionError(DockerEndpoint(None, source), exc) from exc
+    if context is None:
+        missing = DockerException(f"{source} is selected but does not exist")
+        raise DockerConnectionError(DockerEndpoint(None, source), missing)
+    return DockerEndpoint(context.Host, source, context.TLSConfig)
 
 
 def connect_docker() -> Any:
     """Return a ``docker.DockerClient`` for the resolved endpoint or raise DockerConnectionError."""
     endpoint = resolve_docker_endpoint()
     try:
-        if endpoint.host is None:
-            return docker.from_env()
+        if endpoint.source == "DOCKER_HOST" or endpoint.host is None:
+            return docker.from_env()  # also reads DOCKER_TLS_VERIFY and DOCKER_CERT_PATH
         return docker.DockerClient(base_url=endpoint.host, tls=endpoint.tls or False)
     except DockerException as exc:
         raise DockerConnectionError(endpoint, exc) from exc
