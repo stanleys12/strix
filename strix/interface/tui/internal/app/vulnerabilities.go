@@ -135,7 +135,7 @@ func clampVulnerabilityOffset(offset, total, height int) int {
 
 func (m Model) vulnerabilityPageSize() int {
 	_, vulnHeight, _, _ := m.sidebarHeights()
-	return max(1, vulnHeight-3)
+	return max(1, vulnHeight-4)
 }
 
 // vulnerabilityPageItems is how many findings a page step should move by: the

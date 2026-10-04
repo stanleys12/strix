@@ -318,3 +318,40 @@ func TestStatsPanelKeepsAssignedHeight(t *testing.T) {
 		t.Fatalf("sidebar renders %d rows, want %d", got, m.height)
 	}
 }
+
+func TestHeadersAreFollowedByABlankRow(t *testing.T) {
+	m := panelsModel(t)
+	_, sidebarWidth, _, _ := m.layout()
+	rows := strings.Split(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "\n")
+	for _, panel := range []sidebarPanel{panelAgents, panelFindings, panelMcp} {
+		rect := panelRectOf(t, m, panel)
+		header, blank, first := rows[rect.top+1], rows[rect.top+2], rows[rect.top+3]
+		if !strings.Contains(header, m.panelTitle(panel)) || strings.TrimSpace(strings.Trim(blank, "│")) != "" || strings.TrimSpace(strings.Trim(first, "│")) == "" {
+			t.Fatalf("panel %d should render header, blank row, content:\n%s", panel, strings.Join(rows[rect.top:rect.top+4], "\n"))
+		}
+	}
+}
+
+func TestLonePanelHasNoControls(t *testing.T) {
+	m := panelsModel(t)
+	m.snapshot.Vulnerabilities = nil
+	m.snapshot.Connections = nil
+	_, sidebarWidth, _, _ := m.layout()
+	view := ansi.Strip(m.sidebarView(sidebarWidth, m.height))
+	if strings.ContainsAny(view, "▾▸⤢⤡") || !strings.Contains(view, "Agents (31)") {
+		t.Fatalf("a lone Agents panel should carry no collapse or zoom controls:\n%s", view)
+	}
+	rect := panelRectOf(t, m, panelAgents)
+	m = click(t, m, m.width-3, rect.top+1)
+	m = click(t, m, m.width-10, rect.top+1)
+	if m.zoomedPanel != panelNone || len(m.collapsedPanels) != 0 || panelRectOf(t, m, panelAgents) != rect {
+		t.Fatalf("header clicks changed a lone panel: zoom=%v collapsed=%v", m.zoomedPanel, m.collapsedPanels)
+	}
+	if m.sidebarGap() != 0 {
+		t.Fatalf("lone Agents panel should take the spare rows, gap=%d", m.sidebarGap())
+	}
+	m.snapshot.Connections = panelsModel(t).snapshot.Connections
+	if !strings.Contains(ansi.Strip(m.sidebarView(sidebarWidth, m.height)), "▾ Agents (31)") {
+		t.Fatalf("controls should return once a second panel exists")
+	}
+}

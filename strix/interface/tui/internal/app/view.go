@@ -544,7 +544,7 @@ func (m Model) sidebarView(width, height int) string {
 		Render(m.viewerBox(width - 4))}
 	agents := ""
 	if agentHeight > 1 {
-		agentRows := max(1, agentHeight-3)
+		agentRows := max(1, agentHeight-4)
 		agents = withVerticalScrollbar(
 			m.agentsView(max(1, width-5), agentRows),
 			width-4,
@@ -559,7 +559,7 @@ func (m Model) sidebarView(width, height int) string {
 	if vulnHeight > 0 {
 		findings := ""
 		if vulnHeight > 1 {
-			vulnRows := max(1, vulnHeight-3)
+			vulnRows := max(1, vulnHeight-4)
 			totalRows, offsetRows := m.vulnerabilityScrollRows()
 			findings = withVerticalScrollbar(
 				m.vulnerabilitiesView(m.vulnerabilityListWidth(), vulnRows),
@@ -576,7 +576,7 @@ func (m Model) sidebarView(width, height int) string {
 	if mcpHeight > 0 {
 		roster := ""
 		if mcpHeight > 1 {
-			roster = m.mcpConnectionsView(width-4, max(1, mcpHeight-3))
+			roster = m.mcpConnectionsView(width-4, max(1, mcpHeight-4))
 		}
 		parts = append(parts, m.panelBox(panelMcp, roster, width, mcpHeight, m.focus == focusMcp))
 	}
@@ -598,22 +598,25 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.sidebarInnerWidth()).Render(m.statsView()))
 	statsHeight = m.panelHeight(panelStats, min(15, statsRows+2))
 	if len(m.snapshot.Vulnerabilities) > 0 {
-		vulnHeight = m.panelHeight(panelFindings, min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+3))
+		vulnHeight = m.panelHeight(panelFindings, min(13, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+4))
 	}
 	// Header line + one line per connection + the box border (2). Capped so a
 	// long roster cannot crowd out the agent tree; a roster past the cap scrolls
 	// inside the panel. Absent entirely when the run has no MCP connections.
 	if len(m.snapshot.Connections) > 0 {
-		mcpHeight = m.panelHeight(panelMcp, min(9, len(m.snapshot.Connections)+3))
+		mcpHeight = m.panelHeight(panelMcp, min(10, len(m.snapshot.Connections)+4))
 	}
-	agentHeight = m.panelHeight(panelAgents, 4)
-	for _, h := range []*int{&statsHeight, &mcpHeight, &vulnHeight} {
+	agentHeight = m.panelHeight(panelAgents, 5)
+	for _, p := range []struct {
+		h     *int
+		floor int
+	}{{&statsHeight, 4}, {&mcpHeight, 5}, {&vulnHeight, 5}} {
 		over := m.viewerHeight() + statsHeight + vulnHeight + mcpHeight + agentHeight - m.height
 		if over <= 0 {
 			break
 		}
-		if *h > 4 {
-			*h -= min(over, *h-4)
+		if *p.h > p.floor {
+			*p.h -= min(over, *p.h-p.floor)
 		}
 	}
 	for _, h := range []*int{&mcpHeight, &vulnHeight, &statsHeight} {

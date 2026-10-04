@@ -221,7 +221,7 @@ func (m *Model) ensureAgentVisible() {
 
 func (m Model) agentPageSize() int {
 	_, _, _, agentHeight := m.sidebarHeights()
-	return max(1, agentHeight-3)
+	return max(1, agentHeight-4)
 }
 
 func (m *Model) keepAgentSelectionInWindow() {

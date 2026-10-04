@@ -33,8 +33,12 @@ type panelRect struct {
 	height int
 }
 
+func (m Model) panelControls() bool {
+	return len(m.snapshot.Vulnerabilities) > 0 || len(m.snapshot.Connections) > 0
+}
+
 func (m Model) panelShrunk(panel sidebarPanel) bool {
-	if panel == panelStats {
+	if panel == panelStats || !m.panelControls() {
 		return false
 	}
 	return m.collapsedPanels[panel] || (m.zoomedPanel != panelNone && m.zoomedPanel != panel)
@@ -115,6 +119,9 @@ func (m Model) panelTitle(panel sidebarPanel) string {
 
 func (m Model) panelHeader(panel sidebarPanel, width int) string {
 	style := lipgloss.NewStyle().Foreground(dim)
+	if !m.panelControls() {
+		return truncate(style.Render(m.panelTitle(panel)), max(1, width))
+	}
 	glyph := panelZoomGlyph
 	if m.zoomedPanel == panel {
 		glyph = panelUnzoomGlyph
@@ -145,7 +152,7 @@ func (m Model) panelBox(panel sidebarPanel, body string, width, height int, focu
 	if panel != panelStats {
 		content = m.panelHeader(panel, width-4)
 		if body != "" {
-			content += "\n" + body
+			content += "\n\n" + body
 		}
 	}
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.RoundedBorder()).
@@ -246,7 +253,7 @@ func (m *Model) revealPanel(panel sidebarPanel) {
 
 func (m *Model) clickPanel(rect panelRect, x, y int) bool {
 	switch {
-	case rect.panel == panelStats:
+	case rect.panel == panelStats || !m.panelControls():
 		return false
 	case rect.height <= 1 && !m.panelShrunk(rect.panel):
 		m.togglePanelZoom(rect.panel)
