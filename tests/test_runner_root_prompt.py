@@ -131,7 +131,7 @@ async def test_root_prompt_options_flow_into_root_agent(
     kwargs = captured["kwargs"]
     instructions_override = kwargs["instructions_override"]
     assert "SCOPE:" in instructions_override
-    assert "USER-DECLARED TARGETS" in instructions_override
+    assert "AUTHORIZED TARGETS" in instructions_override
     assert "https://example.com" in instructions_override
     assert "CUSTOM SCAN PROMPT" in instructions_override
     assert instructions_override.count("SCOPE:") == 1
