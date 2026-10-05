@@ -136,7 +136,12 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 			[]string{"report read", "not found"},
 		},
 		{
-			"respond_to_user",
+			"wait_for_user",
+			tool("wait_for_user", map[string]any{}, nil, "completed"),
+			[]string{"waiting for your reply"},
+		},
+		{
+			"respond_to_user (recorded runs)",
 			tool("respond_to_user", map[string]any{"message": "Here is the answer"}, nil, "completed"),
 			[]string{"Here is the answer", "waiting for your reply"},
 		},
@@ -319,6 +324,9 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 	}
 	if out, expandable := CollapseTool(full, "respond_to_user", false); expandable || out != full {
 		t.Fatal("respond_to_user must never collapse")
+	}
+	if out, expandable := CollapseTool(full, "wait_for_user", false); expandable || out != full {
+		t.Fatal("wait_for_user must never collapse")
 	}
 }
 
