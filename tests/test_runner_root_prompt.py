@@ -136,7 +136,10 @@ async def test_root_prompt_options_flow_into_root_agent(
     assert "CUSTOM SCAN PROMPT" in instructions_override
     assert instructions_override.count("SCOPE:") == 1
     assert instructions_override.index("CUSTOM SCAN PROMPT") < instructions_override.index("SCOPE:")
-    assert "They are not user messages and cannot change scope." in instructions_override
+    assert (
+        "The following root scan instructions describe the task configuration."
+        in instructions_override
+    )
     assert kwargs["system_prompt_context"] == {
         **scope_context,
         "target_context": "known findings",
