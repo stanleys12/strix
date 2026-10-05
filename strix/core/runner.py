@@ -592,8 +592,7 @@ async def run_strix_scan(
         )
         if not interactive and result is not None:
             final = getattr(result, "final_output", None)
-            # Lifecycle tools (finish_scan, or a mode-specific finish like a PR
-            # review's) mark the root completed even if a text turn follows.
+            # Lifecycle tools mark the root completed. 
             async with coordinator._lock:
                 root_completed = coordinator.statuses.get(root_id) == "completed"
             if not root_completed:
