@@ -1437,6 +1437,48 @@ async def test_whitespace_only_text_does_not_count_as_a_reply(
 
 
 @pytest.mark.asyncio
+async def test_a_stop_during_a_silent_yield_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operator stop that lands while the agent is parked must survive the bounce."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+
+    async def _park_then_get_stopped(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("input_data"))
+        await coordinator.park_waiting("root", wait_kind="user")
+        await coordinator.request_stop("root")
+        return MagicMock(final_output="", new_items=[])
+
+    monkeypatch.setattr(execution, "_run_cycle_parked", _park_then_get_stopped)
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 1
+    assert coordinator.statuses["root"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_resume_silent_user_wait_only_touches_a_user_park() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    await coordinator.park_waiting("root", wait_kind="user")
+    assert await coordinator.resume_silent_user_wait("root") is True
+    assert coordinator.statuses["root"] == "running"
+    assert "root" not in coordinator.wait_kinds
+
+    await coordinator.park_waiting("root", wait_kind="agents")
+    assert await coordinator.resume_silent_user_wait("root") is False
+    assert coordinator.statuses.get("root") == "waiting"
+
+    await coordinator.request_stop("root")
+    assert await coordinator.resume_silent_user_wait("root") is False
+    assert coordinator.statuses.get("root") == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_a_wait_on_agents_is_never_a_silent_yield(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

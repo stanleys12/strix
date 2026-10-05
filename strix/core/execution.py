@@ -574,10 +574,12 @@ async def _run_until_lifecycle(
             continue
 
         said_to_user = said_to_user or _said_to_user(result)
-        status = await _agent_status(coordinator, agent_id)
+        # Atomic: only an agent still parked on the user is put back to work, so
+        # a stop that lands in between is never overwritten.
         silent_yield = (
-            interactive and not said_to_user and await _parked_for_user(coordinator, agent_id)
+            interactive and not said_to_user and await coordinator.resume_silent_user_wait(agent_id)
         )
+        status = await _agent_status(coordinator, agent_id)
         if status != "running" and not silent_yield:
             await coordinator.reset_recovery(agent_id)
             return result
@@ -591,9 +593,6 @@ async def _run_until_lifecycle(
             interactive=interactive,
             silent_yield=silent_yield,
         )
-        if silent_yield:
-            await coordinator.mark_running(agent_id)
-
         if recoveries >= recovery_limit:
             return await _exhausted_recovery(coordinator, agent_id, result, interactive=interactive)
 
@@ -893,14 +892,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
 async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status | None:
     async with coordinator._lock:
         return coordinator.statuses.get(agent_id)
-
-
-async def _parked_for_user(coordinator: AgentCoordinator, agent_id: str) -> bool:
-    async with coordinator._lock:
-        return (
-            coordinator.statuses.get(agent_id) == "waiting"
-            and coordinator.wait_kinds.get(agent_id) == "user"
-        )
 
 
 def _log_recovery(
