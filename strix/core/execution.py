@@ -7,6 +7,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,7 +35,12 @@ from strix.core.sessions import (
     strip_all_images_from_session,
 )
 from strix.llm import request_log
-from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.llm.compaction import (
+    CompactionNeededError,
+    is_context_overflow,
+    maybe_compact,
+    needs_compaction,
+)
 
 
 if TYPE_CHECKING:
@@ -44,6 +50,7 @@ if TYPE_CHECKING:
     from agents.lifecycle import RunHooks
     from agents.memory import Session, SQLiteSession
     from agents.result import RunResultBase
+    from agents.run_config import CallModelData, ModelInputData
 
     from strix.core.agents import AgentCoordinator, Status
 
@@ -118,6 +125,33 @@ async def _compact_session(
         tools_text=_agent_tools_text(agent),
         force=force,
     )
+
+
+def _with_compaction_check(run_config: RunConfig) -> RunConfig:
+    """Stop the run before a model request that would overrun the context window so
+    the cycle can compact and resume: the SDK builds each request from its in-memory
+    history, so compacting the session mid-run would not shrink it."""
+    model = _run_config_model(run_config)
+    if model is None:
+        return run_config
+    first_call = True
+
+    async def _check(data: CallModelData[Any]) -> ModelInputData:
+        nonlocal first_call
+        # Skip the first call: the cycle compacts right before the run, and the run's
+        # new input is only persisted after this filter, so stopping here would lose it.
+        if not first_call and await asyncio.to_thread(
+            needs_compaction,
+            model,
+            data.model_data.instructions or "",
+            _agent_tools_text(data.agent),
+            data.model_data.input,
+        ):
+            raise CompactionNeededError(model)
+        first_call = False
+        return data.model_data
+
+    return replace(run_config, call_model_input_filter=_check)
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
@@ -747,7 +781,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
-                run_config=run_config,
+                run_config=run_config if session is None else _with_compaction_check(run_config),
                 context=context,
                 max_turns=max_turns,
                 session=session,
@@ -824,18 +858,19 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            if (
-                compactions < _MAX_COMPACTIONS_PER_CYCLE
-                and session is not None
-                and is_context_overflow(exc)
-            ):
+            budget_hit = isinstance(exc, CompactionNeededError)
+            overflowed = compactions < _MAX_COMPACTIONS_PER_CYCLE and is_context_overflow(exc)
+            if session is not None and (budget_hit or overflowed):
                 try:
                     compacted = await _compact_session(agent, session, run_config, force=True)
                 except Exception:
                     logger.exception("overflow compaction recovery failed for %s", agent_id)
                     compacted = False
                 if compacted:
-                    compactions += 1
+                    # Each check_context restart makes at least one model call, so only
+                    # provider overflows need a cap.
+                    if not budget_hit:
+                        compactions += 1
                     logger.info(
                         "Compacted %s session after context overflow; retrying (%d)",
                         agent_id,
