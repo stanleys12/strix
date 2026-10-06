@@ -10,6 +10,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import (
@@ -903,6 +904,36 @@ def supports_strict_tool_schemas(model_name: str) -> bool:
 def model_supports_reasoning(model_name: str) -> bool:
     entry = _catalog_entry(model_name)
     return bool(entry and entry.get("supports_reasoning"))
+
+
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+
+@cache
+def _openrouter_input_modalities() -> dict[str, list[str]] | None:
+    import requests
+
+    try:
+        response = requests.get(_OPENROUTER_MODELS_URL, timeout=5)
+        response.raise_for_status()
+        return {
+            model["id"].lower(): model["architecture"]["input_modalities"]
+            for model in response.json()["data"]
+        }
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not fetch OpenRouter model modalities", exc_info=True)
+        return None
+
+
+def model_supports_images(model_name: str) -> bool:
+    """Return whether the model accepts image input; unknown models are assumed to."""
+    if is_openrouter_model(model_name):
+        slug = model_name.strip().lower().split("openrouter/", 1)[1]
+        modalities = (_openrouter_input_modalities() or {}).get(slug)
+        if modalities is not None:
+            return "image" in modalities
+    entry = _catalog_entry(model_name)
+    return bool(entry.get("supports_vision", True)) if entry else True
 
 
 def _bare_openai_name(model_name: str) -> str:
