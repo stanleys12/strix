@@ -25,6 +25,10 @@ def set_scan_id(scan_id: str) -> None:
     _SCAN_ID.set(scan_id)
 
 
+def current_scan_id() -> str:
+    return _SCAN_ID.get() or "-"
+
+
 def set_agent_id(agent_id: str | None) -> None:
     """Set or clear the agent_id seen on every log record from this point.
 

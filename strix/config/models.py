@@ -43,7 +43,7 @@ from strix.config import codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
-from strix.llm import request_log
+from strix.llm import provider_bans, request_log
 
 
 if TYPE_CHECKING:
@@ -793,9 +793,18 @@ def _install_openrouter_stream_cost_capture() -> None:
             # Pin each agent's calls to one upstream provider so its prompt cache
             # survives between turns.
             body = super().transform_request(*args, **kwargs)
+            model = kwargs.get("model", args[0] if args else "")
+            if banned := provider_bans.banned_providers(model):
+                # Copy: strix-pro's hook sets ``provider`` to a dict it caches.
+                provider = dict(body.get("provider") or {})
+                provider["ignore"] = sorted({*provider.get("ignore", ()), *banned})
+                body["provider"] = provider
             agent_id = request_log.current_call_context().agent_id
             if agent_id and load_settings().llm.openrouter_sticky_sessions:
                 session_id = _OPENROUTER_SESSION_IDS.setdefault(agent_id, str(uuid.uuid4()))
+                # A new session after each ban lets OpenRouter pick a new provider.
+                if bans := provider_bans.ban_count(model):
+                    session_id = f"{session_id}-{bans}"
                 body.setdefault("session_id", session_id)
             return body
 
