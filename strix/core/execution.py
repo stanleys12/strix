@@ -127,6 +127,19 @@ async def _compact_session(
     )
 
 
+async def _session_needs_compaction(agent: Any, session: Session, run_config: RunConfig) -> bool:
+    model = _run_config_model(run_config)
+    if model is None:
+        return False
+    return await asyncio.to_thread(
+        needs_compaction,
+        model,
+        _agent_instructions(agent),
+        _agent_tools_text(agent),
+        list(await session.get_items()),
+    )
+
+
 def _with_compaction_check(run_config: RunConfig) -> RunConfig:
     """Stop the run before a model request that would overrun the context window so
     the cycle can compact and resume: the SDK builds each request from its in-memory
@@ -759,6 +772,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    check_context = session is not None
     request_log.set_retry_attempt(0)
     while True:
         stream: Any = None
@@ -781,7 +795,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
-                run_config=run_config if session is None else _with_compaction_check(run_config),
+                run_config=_with_compaction_check(run_config) if check_context else run_config,
                 context=context,
                 max_turns=max_turns,
                 session=session,
@@ -858,19 +872,38 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            budget_hit = isinstance(exc, CompactionNeededError)
-            overflowed = compactions < _MAX_COMPACTIONS_PER_CYCLE and is_context_overflow(exc)
-            if session is not None and (budget_hit or overflowed):
+            if session is not None and isinstance(exc, CompactionNeededError):
+                # Rerun without the check if compaction can't bring the session under
+                # the budget; a real overflow then falls to the capped recovery below.
+                try:
+                    compacted = await _compact_session(agent, session, run_config, force=True)
+                    check_context = compacted and not await _session_needs_compaction(
+                        agent, session, run_config
+                    )
+                except Exception:
+                    logger.exception("context budget compaction failed for %s", agent_id)
+                    check_context = False
+                logger.info(
+                    "%s hit the context budget; %s",
+                    agent_id,
+                    "compacted and resuming"
+                    if check_context
+                    else "rerunning without the budget check",
+                )
+                input_data = []
+                continue
+            if (
+                compactions < _MAX_COMPACTIONS_PER_CYCLE
+                and session is not None
+                and is_context_overflow(exc)
+            ):
                 try:
                     compacted = await _compact_session(agent, session, run_config, force=True)
                 except Exception:
                     logger.exception("overflow compaction recovery failed for %s", agent_id)
                     compacted = False
                 if compacted:
-                    # Each check_context restart makes at least one model call, so only
-                    # provider overflows need a cap.
-                    if not budget_hit:
-                        compactions += 1
+                    compactions += 1
                     logger.info(
                         "Compacted %s session after context overflow; retrying (%d)",
                         agent_id,
