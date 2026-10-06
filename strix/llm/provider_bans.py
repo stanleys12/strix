@@ -19,7 +19,6 @@ _LOCK = threading.Lock()
 # OpenRouter reports display names ("InferenceNet"); provider.ignore takes slugs ("inference-net").
 _SLUGS: dict[str, dict[str, str]] = {}
 _BANNED: dict[str, set[str]] = {}
-_BAN_COUNTS: dict[str, int] = {}
 
 
 def _model_id(model: str) -> str:
@@ -78,7 +77,6 @@ def ban_provider(model: str, provider: str, reason: str) -> bool:
         if slug in banned:
             return True
         banned.add(slug)
-        _BAN_COUNTS[model] = _BAN_COUNTS.get(model, 0) + 1
         logger.warning(
             "provider_banned upstream=%s slug=%s model=%s reason=%s scan_id=%s",
             provider,
@@ -101,8 +99,3 @@ def ban_provider(model: str, provider: str, reason: str) -> bool:
 def banned_providers(model: str) -> list[str]:
     with _LOCK:
         return sorted(_BANNED.get(_model_id(model), ()))
-
-
-def ban_count(model: str) -> int:
-    with _LOCK:
-        return _BAN_COUNTS.get(_model_id(model), 0)

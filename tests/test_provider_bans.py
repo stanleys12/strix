@@ -26,7 +26,7 @@ ENDPOINTS = [
 
 @pytest.fixture(autouse=True)
 def endpoints() -> Iterator[MagicMock]:
-    for state in (provider_bans._SLUGS, provider_bans._BANNED, provider_bans._BAN_COUNTS):
+    for state in (provider_bans._SLUGS, provider_bans._BANNED):
         state.clear()
     response = httpx.Response(
         200,
@@ -44,7 +44,6 @@ def test_ban_maps_provider_names_to_slugs(endpoints: MagicMock) -> None:
         assert provider_bans.ban_provider(MODEL, "InferenceNet", "context_length")
 
     assert provider_bans.banned_providers(MODEL) == ["google-vertex", "inference-net"]
-    assert provider_bans.ban_count("z-ai/glm-5.3") == 2
     assert provider_bans.banned_providers("openrouter/other/model") == []
     endpoints.assert_called_once_with(
         "https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints", timeout=5
@@ -66,7 +65,6 @@ def test_banning_every_provider_unbans_them_all() -> None:
         assert not provider_bans.ban_provider(MODEL, "Google", "provider_unavailable")
 
     assert provider_bans.banned_providers(MODEL) == []
-    assert provider_bans.ban_count(MODEL) == 3
     assert logger.warning.call_args.args[0].startswith("provider_bans_reset ")
 
 
@@ -76,7 +74,6 @@ def test_ban_is_skipped_for_an_unknown_provider_or_failed_lookup(endpoints: Magi
     assert not provider_bans.ban_provider("openrouter/other/model", "Relace", "x")
 
     assert provider_bans.banned_providers(MODEL) == []
-    assert provider_bans.ban_count(MODEL) == 0
 
 
 def test_bans_can_be_turned_off(endpoints: MagicMock) -> None:

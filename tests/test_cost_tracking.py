@@ -400,27 +400,20 @@ def test_openrouter_request_ignores_banned_providers() -> None:
     assert config is not None
     messages: list[AllMessageValues] = [{"role": "user", "content": "hi"}]
     pro_preferences = {"order": ["novita", "relace"], "allow_fallbacks": True, "ignore": ["a"]}
-    token = request_log.bind_call_context("e5f6a7b8", "root")
-    try:
-        with (
-            patch(
-                "litellm.llms.openrouter.chat.transformation.OpenrouterConfig.transform_request",
-                return_value={"provider": pro_preferences},
-            ),
-            patch("strix.config.models.load_settings") as settings,
-            patch("strix.llm.provider_bans.banned_providers", return_value=["relace"]),
-            patch("strix.llm.provider_bans.ban_count", return_value=1),
-        ):
-            settings.return_value.llm.openrouter_sticky_sessions = True
-            body = config.transform_request(
-                model="moonshotai/kimi-k3",
-                messages=messages,
-                optional_params={},
-                litellm_params={},
-                headers={},
-            )
-    finally:
-        request_log.reset_call_context(token)
+    with (
+        patch(
+            "litellm.llms.openrouter.chat.transformation.OpenrouterConfig.transform_request",
+            return_value={"provider": pro_preferences},
+        ),
+        patch("strix.llm.provider_bans.banned_providers", return_value=["relace"]),
+    ):
+        body = config.transform_request(
+            model="moonshotai/kimi-k3",
+            messages=messages,
+            optional_params={},
+            litellm_params={},
+            headers={},
+        )
 
     assert body["provider"] == {
         "order": ["novita", "relace"],
@@ -428,9 +421,6 @@ def test_openrouter_request_ignores_banned_providers() -> None:
         "ignore": ["a", "relace"],
     }
     assert pro_preferences["ignore"] == ["a"]
-    session_id, bans = body["session_id"].rsplit("-", 1)
-    assert bans == "1"
-    assert str(uuid.UUID(session_id)) == session_id
 
 
 def _openrouter_config() -> Any:
