@@ -73,6 +73,7 @@ class LlmSettings(BaseSettings):
         alias="STRIX_OPENROUTER_STICKY_SESSIONS",
     )
     openrouter_provider_bans: bool = Field(default=True, alias="STRIX_OPENROUTER_PROVIDER_BANS")
+    openrouter_ban_after_4xx: int = Field(default=2, ge=1, alias="STRIX_OPENROUTER_BAN_AFTER_4XX")
     disable_streaming: bool = Field(
         default=False,
         alias="LLM_DISABLE_STREAMING",

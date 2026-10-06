@@ -774,7 +774,9 @@ def _install_openrouter_stream_cost_capture() -> None:
             with contextlib.suppress(Exception):
                 error = json.loads(error_message)["error"]
                 request_log.record_upstream_provider(
-                    error["metadata"].get("provider_name"), _openrouter_error_type(error)
+                    error["metadata"].get("provider_name"),
+                    _openrouter_error_type(error),
+                    rejected=True,
                 )
             return super().get_error_class(error_message, status_code, headers)
 

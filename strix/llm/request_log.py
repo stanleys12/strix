@@ -161,18 +161,24 @@ class HttpReply:
     headers: dict[str, str] | None = None
     upstream_provider: str | None = None
     upstream_error_type: str | None = None
+    # The provider rejected the request (named in the gateway's error body).
+    upstream_rejected: bool = False
 
 
 _http_reply: ContextVar[HttpReply | None] = ContextVar("strix_llm_http_reply", default=None)
+_FAILED_REPLY_ATTR = "_strix_http_reply"
 
 
-def record_upstream_provider(provider: object, error_type: object = None) -> None:
+def record_upstream_provider(
+    provider: object, error_type: object = None, *, rejected: bool = False
+) -> None:
     """Remember which provider behind a gateway served the attempt in flight."""
     reply = _http_reply.get()
     if reply is None:
         return
     if isinstance(provider, str) and provider:
         reply.upstream_provider = provider
+        reply.upstream_rejected = rejected
     if isinstance(error_type, str) and error_type:
         reply.upstream_error_type = error_type
 
@@ -184,6 +190,12 @@ def _upstream_details(reply: HttpReply | None) -> list[tuple[str, object]]:
         ("upstream_provider", reply.upstream_provider),
         ("upstream_error_type", reply.upstream_error_type),
     ]
+
+
+def failed_reply(exc: BaseException) -> HttpReply | None:
+    """The reply of the attempt that raised ``exc``."""
+    reply = getattr(exc, _FAILED_REPLY_ATTR, None)
+    return reply if isinstance(reply, HttpReply) else None
 
 
 async def record_http_reply(response: Response) -> None:
@@ -1207,6 +1219,7 @@ class RequestLoggingModel(Model):
                 prompt=prompt,
             )
         except BaseException as exc:
+            setattr(exc, _FAILED_REPLY_ATTR, reply)
             if self._should_emit(exc):
                 emit(
                     self._event(
@@ -1301,6 +1314,7 @@ class RequestLoggingModel(Model):
                     raw_response = event.response
                 yield event
         except BaseException as exc:
+            setattr(exc, _FAILED_REPLY_ATTR, reply)
             if self._should_emit(exc):
                 emit(
                     self._event(

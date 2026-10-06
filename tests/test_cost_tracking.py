@@ -466,6 +466,7 @@ def test_openrouter_records_upstream_of_stream_and_mid_stream_error() -> None:
         request_log._http_reply.reset(token)
     assert reply.upstream_provider == "Relace"
     assert reply.upstream_error_type == "invalid_request"
+    assert reply.upstream_rejected is False
 
 
 def test_openrouter_records_upstream_of_pre_stream_error() -> None:
@@ -485,3 +486,4 @@ def test_openrouter_records_upstream_of_pre_stream_error() -> None:
         request_log._http_reply.reset(token)
     assert reply.upstream_provider == "InferenceNet"
     assert reply.upstream_error_type is None
+    assert reply.upstream_rejected is True

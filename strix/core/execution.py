@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
@@ -20,6 +21,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.loader import load_settings
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -33,7 +35,7 @@ from strix.core.sessions import (
     seed_initial_input,
     strip_all_images_from_session,
 )
-from strix.llm import request_log
+from strix.llm import provider_bans, request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
 
 
@@ -123,6 +125,7 @@ async def _compact_session(
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
+_provider_4xx_counts: Counter[tuple[str, str]] = Counter()
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
@@ -138,11 +141,39 @@ def _is_transient_model_error(exc: BaseException) -> bool:
     ):
         return True
     code = _model_error_status_code(exc)
+    if code in (401, 402, 403):
+        # Auth, credit and policy errors from the gateway itself (e.g. OpenRouter's
+        # "User not found" 401) name no upstream provider; retrying cannot help.
+        reply = request_log.failed_reply(exc)
+        return reply is not None and reply.upstream_provider is not None
     if code is not None:
         import litellm
 
-        return bool(litellm._should_retry(code))
+        return 400 <= code < 500 or bool(litellm._should_retry(code))
     return isinstance(exc, APIError)
+
+
+async def _maybe_ban_provider(exc: BaseException, run_config: RunConfig) -> None:
+    reply = request_log.failed_reply(exc)
+    if reply is None or reply.upstream_provider is None:
+        return
+    model = _run_config_model(run_config)
+    if model is None:
+        return
+    provider = reply.upstream_provider
+    code = _model_error_status_code(exc)
+    if reply.upstream_error_type == "provider_unavailable":
+        reason = "provider_unavailable"
+    elif reply.upstream_rejected:
+        reason = f"upstream_rejected_{code}"
+    elif code is not None and 400 <= code < 500:
+        _provider_4xx_counts[model, provider] += 1
+        if _provider_4xx_counts[model, provider] < load_settings().llm.openrouter_ban_after_4xx:
+            return
+        reason = "repeated_4xx"
+    else:
+        return
+    await asyncio.to_thread(provider_bans.ban_provider, model, provider, reason)
 
 
 def _transient_model_retry_delay(attempt: int) -> float:
@@ -844,6 +875,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     input_data = []
                     continue
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
+                await _maybe_ban_provider(exc, run_config)
                 model_retries += 1
                 delay = _transient_model_retry_delay(model_retries)
                 logger.warning(

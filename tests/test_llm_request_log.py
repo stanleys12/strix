@@ -1236,6 +1236,23 @@ async def test_litellm_route_wrapper_only_logs_abandoned_attempts(
 
 
 @pytest.mark.asyncio
+async def test_failed_attempt_reply_rides_on_its_exception() -> None:
+    exc = _openai_status_error(400, None)
+    model = request_log.RequestLoggingModel(
+        _Inner(exc=exc),
+        model_name="openrouter/z-ai/glm-5.3",
+        provider="openrouter",
+        base_url=None,
+        route="litellm",
+        abandoned_only=True,
+    )
+    with pytest.raises(APIStatusError):
+        await model.get_response(*_CALL_ARGS, **_CALL_KWARGS)
+    assert isinstance(request_log.failed_reply(exc), request_log.HttpReply)
+    assert request_log.failed_reply(ValueError()) is None
+
+
+@pytest.mark.asyncio
 async def test_stream_closed_early_is_logged_as_abandoned(captured: list[LlmRequestEvent]) -> None:
     created = ResponseCreatedEvent(
         response=_completed_event("resp_e").response, sequence_number=0, type="response.created"

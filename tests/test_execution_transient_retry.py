@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from collections import Counter
+from typing import Any
 
 import httpx
 import pytest
@@ -18,6 +19,7 @@ from openai import (
 from strix.config import codex
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
+from strix.llm import provider_bans, request_log
 
 
 def _request() -> httpx.Request:
@@ -79,13 +81,72 @@ def test_content_guardrail_is_not_retried() -> None:
     assert execution._is_transient_model_error(guardrail) is False
 
 
-def test_client_errors_are_not_transient() -> None:
+def _upstream_error(
+    status: int, provider: str, *, error_type: str | None = None, rejected: bool = False
+) -> APIStatusError:
+    exc = _status_error(status)
+    reply = request_log.HttpReply(
+        upstream_provider=provider, upstream_error_type=error_type, upstream_rejected=rejected
+    )
+    setattr(exc, request_log._FAILED_REPLY_ATTR, reply)
+    return exc
+
+
+def test_client_errors_are_transient() -> None:
     bad_request = BadRequestError(
         "bad", response=httpx.Response(400, request=_request()), body=None
     )
-    assert execution._is_transient_model_error(bad_request) is False
-    assert execution._is_transient_model_error(_status_error(404)) is False
+    assert execution._is_transient_model_error(bad_request) is True
+    assert execution._is_transient_model_error(_status_error(404)) is True
     assert execution._is_transient_model_error(ValueError("nope")) is False
+
+
+def test_gateway_auth_credit_and_policy_errors_are_not_transient() -> None:
+    for status in (401, 402, 403):
+        assert execution._is_transient_model_error(_status_error(status)) is False
+    assert execution._is_transient_model_error(_upstream_error(401, "Relace")) is True
+
+
+@pytest.fixture
+def bans(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+    calls: list[tuple[str, str, str]] = []
+
+    def _ban(model: str, provider: str, reason: str) -> None:
+        calls.append((model, provider, reason))
+
+    monkeypatch.setattr(provider_bans, "ban_provider", _ban)
+    monkeypatch.setattr(execution, "_provider_4xx_counts", Counter())
+    return calls
+
+
+_OPENROUTER_RUN_CONFIG = RunConfig(model="openrouter/z-ai/glm-5.3")
+
+
+@pytest.mark.asyncio
+async def test_bans_upstream_right_away_on_provider_unavailable_or_rejection(
+    bans: list[tuple[str, str, str]],
+) -> None:
+    unavailable = _upstream_error(502, "Relace", error_type="provider_unavailable")
+    await execution._maybe_ban_provider(unavailable, _OPENROUTER_RUN_CONFIG)
+    rejected = _upstream_error(400, "InferenceNet", rejected=True)
+    await execution._maybe_ban_provider(rejected, _OPENROUTER_RUN_CONFIG)
+    assert bans == [
+        ("openrouter/z-ai/glm-5.3", "Relace", "provider_unavailable"),
+        ("openrouter/z-ai/glm-5.3", "InferenceNet", "upstream_rejected_400"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bans_upstream_after_repeated_mid_stream_4xx(
+    bans: list[tuple[str, str, str]],
+) -> None:
+    for _ in range(2):
+        await execution._maybe_ban_provider(_upstream_error(400, "Relace"), _OPENROUTER_RUN_CONFIG)
+        await execution._maybe_ban_provider(
+            _upstream_error(504, "Together"), _OPENROUTER_RUN_CONFIG
+        )
+    await execution._maybe_ban_provider(_status_error(400), _OPENROUTER_RUN_CONFIG)
+    assert bans == [("openrouter/z-ai/glm-5.3", "Relace", "repeated_4xx")]
 
 
 class _FakeStream:
@@ -128,7 +189,7 @@ async def _run_once(
         coordinator,
         "root",
         input_data="task",
-        run_config=cast("RunConfig", object()),
+        run_config=RunConfig(),
         context={},
         max_turns=5,
         session=None,
@@ -166,9 +227,6 @@ async def test_run_cycle_gives_up_after_max_retries(
 async def test_run_cycle_does_not_retry_permanent_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bad_request = BadRequestError(
-        "bad", response=httpx.Response(400, request=_request()), body=None
-    )
-    streams = [_FakeStream(exc=bad_request), _FakeStream()]
-    with pytest.raises(BadRequestError):
+    streams = [_FakeStream(exc=_status_error(401)), _FakeStream()]
+    with pytest.raises(APIStatusError):
         await _run_once(monkeypatch, streams)
