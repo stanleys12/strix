@@ -263,18 +263,28 @@ class _TurnGuardModel(Model):
     not covered by the request timeout, which resets on any byte (keepalives
     included). ``LLM_STREAM_IDLE_TIMEOUT`` bounds the gap between events so the
     turn fails instead of hanging, and the existing retry path replays it.
+    ``LLM_STREAM_FIRST_EVENT_TIMEOUT`` and ``LLM_STREAM_TOTAL_TIMEOUT`` bound
+    the first event and the whole stream. When one of these fires, or OpenRouter
+    reports an upstream timeout, the OpenRouter provider serving the attempt is
+    banned (if a chunk named it) before the retry.
     """
 
     def __init__(
         self,
         inner: Model,
         *,
+        model_name: str | None = None,
         max_tool_calls_per_turn: int = 0,
         stream_idle_timeout: float = 0.0,
+        first_event_timeout: float = 0.0,
+        total_timeout: float = 0.0,
     ) -> None:
         self._inner = inner
+        self._model_name = model_name
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._stream_idle_timeout = stream_idle_timeout
+        self._first_event_timeout = first_event_timeout
+        self._total_timeout = total_timeout
 
     def _limiter(self) -> TurnToolCallLimiter:
         return TurnToolCallLimiter(self._max_tool_calls_per_turn)
@@ -361,10 +371,32 @@ class _TurnGuardModel(Model):
             conversation_id=conversation_id,
             prompt=prompt,
         )
-        async for event in _with_idle_timeout(stream, self._stream_idle_timeout):
-            guarded = _guard_event(event, rewriter, limiter)
-            if guarded is not None:
-                yield guarded
+        with request_log.capture_reply() as reply:
+            try:
+                async for event in _with_timeouts(
+                    stream,
+                    idle=self._stream_idle_timeout,
+                    first_event=self._first_event_timeout,
+                    total=self._total_timeout,
+                ):
+                    guarded = _guard_event(event, rewriter, limiter)
+                    if guarded is not None:
+                        yield guarded
+            except Exception as exc:
+                if isinstance(exc, _StreamTimeoutError):
+                    reason = exc.reason
+                elif reply.upstream_error_type == "timeout":
+                    reason = "upstream_timeout"
+                else:
+                    raise
+                if reply.upstream_provider and self._model_name:
+                    await asyncio.to_thread(
+                        provider_bans.ban_provider,
+                        self._model_name,
+                        reply.upstream_provider,
+                        reason,
+                    )
+                raise
         self._log_dropped(limiter)
 
 
@@ -395,26 +427,73 @@ async def _aclose(stream: AsyncIterator[TResponseStreamEvent]) -> None:
             await stream.aclose()
 
 
-async def _with_idle_timeout(
-    stream: AsyncIterator[TResponseStreamEvent], timeout: float
-) -> AsyncIterator[TResponseStreamEvent]:
-    if timeout <= 0:
-        async for event in stream:
-            yield event
-        return
+class _StreamTimeoutError(TimeoutError):
+    def __init__(self, reason: str, message: str = "") -> None:
+        super().__init__(message or reason)
+        self.reason = reason
 
+
+async def _with_timeouts(
+    stream: AsyncIterator[TResponseStreamEvent],
+    *,
+    idle: float,
+    first_event: float = 0.0,
+    total: float = 0.0,
+) -> AsyncIterator[TResponseStreamEvent]:
+    """Bound the first event, the gap between events and the whole stream; 0 is no bound."""
     iterator = stream.__aiter__()
+    deadline = time.monotonic() + total
+    first = True
     while True:
+        limits: list[tuple[float, float, str]] = []
+        gap = first_event if first else idle
+        if gap:
+            limits.append(
+                (gap, gap, "stream_first_event_timeout" if first else "stream_idle_timeout")
+            )
+        if total:
+            limits.append((max(0.0, deadline - time.monotonic()), total, "stream_total_timeout"))
         try:
-            event = await asyncio.wait_for(iterator.__anext__(), timeout)
+            if not limits:
+                event = await iterator.__anext__()
+            else:
+                wait, limit, reason = min(limits)
+                event = await _next_event(iterator, wait, reason)
         except StopAsyncIteration:
             return
-        except TimeoutError:
+        except _StreamTimeoutError:
             await _aclose(stream)
-            message = f"model stream produced no event for {timeout:.0f}s"
+            message = f"model stream hit {reason} ({limit:.0f}s)"
             logger.warning("%s; abandoning the turn", message)
-            raise TimeoutError(message) from None
+            raise _StreamTimeoutError(reason, message) from None
+        first = False
         yield event
+
+
+async def _next_event(
+    iterator: AsyncIterator[TResponseStreamEvent], timeout: float, reason: str
+) -> TResponseStreamEvent:
+    # asyncio.timeout() cancels without a message, so the request log could not
+    # tell this from a shutdown; this is asyncio.timeout() with a message.
+    task = asyncio.current_task()
+    assert task is not None
+    cancelling = task.cancelling()
+    expired = False
+
+    def expire() -> None:
+        nonlocal expired
+        expired = True
+        task.cancel(msg=f"strix:{reason}")
+
+    handle = asyncio.get_running_loop().call_later(timeout, expire)
+    try:
+        return await iterator.__anext__()
+    except BaseException as exc:
+        if expired and task.uncancel() <= cancelling and isinstance(exc, asyncio.CancelledError):
+            raise _StreamTimeoutError(reason) from None
+        raise
+    finally:
+        handle.cancel()
 
 
 def _guard_event(
@@ -552,6 +631,8 @@ class StrixProvider(MultiProvider):
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
+        first_event_timeout = float(llm.stream_first_event_timeout)
+        total_timeout = float(llm.stream_total_timeout)
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
@@ -592,11 +673,14 @@ class StrixProvider(MultiProvider):
                 # The wrapper emits its single event only once the whole request
                 # is done, so an idle gap is meaningless here; the request
                 # timeout bounds it instead.
-                idle_timeout = 0.0
+                idle_timeout = first_event_timeout = total_timeout = 0.0
         return _TurnGuardModel(
             model,
+            model_name=model_name or llm.model,
             max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
             stream_idle_timeout=idle_timeout,
+            first_event_timeout=first_event_timeout,
+            total_timeout=total_timeout,
         )
 
 

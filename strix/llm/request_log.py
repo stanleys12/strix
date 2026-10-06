@@ -30,7 +30,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
@@ -196,6 +196,17 @@ def failed_reply(exc: BaseException) -> HttpReply | None:
     """The reply of the attempt that raised ``exc``."""
     reply = getattr(exc, _FAILED_REPLY_ATTR, None)
     return reply if isinstance(reply, HttpReply) else None
+
+
+@contextlib.contextmanager
+def capture_reply() -> Iterator[HttpReply]:
+    """Open the attempt's reply here so it outlives the logging wrapper inside."""
+    reply = HttpReply()
+    token = _http_reply.set(reply)
+    try:
+        yield reply
+    finally:
+        _reset_http_reply(token)
 
 
 async def record_http_reply(response: Response) -> None:
@@ -1280,7 +1291,7 @@ class RequestLoggingModel(Model):
         raw_response: object = None
         first_event_mono: float | None = None
         finish_reason: str | None = None
-        reply = HttpReply()
+        reply = _http_reply.get() or HttpReply()
         token = _http_reply.set(reply)
         try:
             async for event in self._inner.stream_response(
@@ -1363,7 +1374,8 @@ def _is_abandonment(exc: BaseException | None) -> bool:
 
 def _abandonment_message(exc: BaseException) -> str | None:
     if isinstance(exc, asyncio.CancelledError):
-        return "attempt cancelled before the reply was consumed (stream idle timeout or shutdown)"
+        reason = f": {exc.args[0]}" if exc.args else ""
+        return f"attempt cancelled before the reply was consumed{reason}"
     if isinstance(exc, GeneratorExit):
         return "stream closed by the caller before it finished"
     return None
