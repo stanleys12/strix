@@ -287,6 +287,15 @@ def test_requested_skills_follow_the_shared_prefix() -> None:
     assert "<xss>" in xss.split("<cache_point>")[1]
 
 
+def test_text_only_prompt_drops_screenshot_guidance() -> None:
+    assert "view_image" in render_system_prompt(include_scope=False)
+
+    prompt = render_system_prompt(include_scope=False, supports_images=False)
+    assert "view_image" not in prompt
+    assert "text-only model" in prompt
+    assert "### Handle multiple pages via tabs" in prompt
+
+
 def test_scope_is_sent_as_its_own_system_message_on_cache_point_routes() -> None:
     settings = make_model_settings(None, model_name="anthropic/claude-sonnet-5-5")
     prompt = render_system_prompt(

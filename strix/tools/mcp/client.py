@@ -183,7 +183,9 @@ def _build_server(config: McpConnectionConfig) -> BuiltMcpServer:
     )
 
 
-def _mcp_result_to_tool_output(server: MCPServer, result: Any) -> Any:
+def _mcp_result_to_tool_output(
+    server: MCPServer, result: Any, *, supports_images: bool = True
+) -> Any:
     """Serialize a ``CallToolResult`` to a tool output, mirroring the agents SDK.
 
     This reproduces the serialization in ``agents.mcp.util.MCPUtil.invoke_mcp_tool``
@@ -199,6 +201,13 @@ def _mcp_result_to_tool_output(server: MCPServer, result: Any) -> Any:
     for item in result.content:
         if item.type == "text":
             outputs.append({"type": "text", "text": item.text})
+        elif item.type == "image" and not supports_images:
+            outputs.append(
+                {
+                    "type": "text",
+                    "text": f"[{item.mimeType} image omitted: this model cannot view images]",
+                }
+            )
         elif item.type == "image":
             outputs.append(
                 {"type": "image", "image_url": f"data:{item.mimeType};base64,{item.data}"}
@@ -217,6 +226,7 @@ async def dispatch_mcp_call(
     *,
     label: str,
     result_transform: ResultTransform | None = None,
+    supports_images: bool = True,
 ) -> Any:
     """Run one MCP tool call and convert its result to a tool output.
 
@@ -235,7 +245,7 @@ async def dispatch_mcp_call(
     result = await server.call_tool(tool_name, arguments)
     if result_transform is not None:
         return result_transform(label, result.model_dump(mode="json"))
-    tool_output = _mcp_result_to_tool_output(server, result)
+    tool_output = _mcp_result_to_tool_output(server, result, supports_images=supports_images)
     if getattr(result, "isError", False):
         return _errored_tool_output(tool_output)
     return tool_output

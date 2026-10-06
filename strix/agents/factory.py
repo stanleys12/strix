@@ -375,6 +375,11 @@ def _configure_filesystem_tools(
             )
 
 
+class _FilesystemWithoutViewImage(Filesystem):
+    def tools(self) -> list[Tool]:
+        return [tool for tool in super().tools() if tool.name != "view_image"]
+
+
 def _make_filesystem_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
     def configure(toolset: Any) -> None:
         _configure_filesystem_tools(
@@ -670,6 +675,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    supports_images: bool = True,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -694,6 +700,7 @@ def build_strix_agent(
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
@@ -729,7 +736,7 @@ def build_strix_agent(
         tool_use_behavior=_finish_tool_use_behavior,
         model=None,
         capabilities=[
-            Filesystem(
+            (Filesystem if supports_images else _FilesystemWithoutViewImage)(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
                     strict_schemas=strict_tool_schemas,
@@ -754,6 +761,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    supports_images: bool = True,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -774,6 +782,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            supports_images=supports_images,
         )
 
     return _factory
