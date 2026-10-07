@@ -287,13 +287,15 @@ def _with_strictness(tool: FunctionTool, strict_schemas: bool) -> FunctionTool:
 
 def _merged_variants(variants: list[dict[str, Any]]) -> dict[str, Any] | None:
     merged: dict[str, Any] = {}
+    types: list[str] = []
     for variant in variants:
-        if not isinstance(variant.get("type"), str):
+        if not isinstance(variant.get("type"), str) or variant["type"] in types:
             return None
         if merged.keys() & (variant.keys() - {"type"}) or variant.keys() & {"enum", "const"}:
             return None
         merged |= variant
-    merged["type"] = [variant["type"] for variant in variants]
+        types.append(variant["type"])
+    merged["type"] = types
     return merged
 
 

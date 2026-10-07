@@ -184,6 +184,7 @@ def test_nullable_parameter_keeps_its_variant_schema() -> None:
         {"anyOf": [{"type": "string", "const": "a"}, {"type": "null"}]},
         {"anyOf": [{"type": "string", "format": "uri"}, {"type": "array", "format": "x"}]},
         {"anyOf": [{"$ref": "#/$defs/Mode"}, {"type": "null"}]},
+        {"anyOf": [{"type": "string", "minLength": 2}, {"type": "string"}]},
     ],
 )
 def test_unmergeable_unions_are_left_untouched(spec: dict[str, Any]) -> None:
