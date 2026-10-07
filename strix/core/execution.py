@@ -22,6 +22,7 @@ from openai import (
 
 from strix.config import codex
 from strix.config.loader import load_settings
+from strix.config.models import StreamTimeoutError
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -162,7 +163,11 @@ async def _maybe_ban_provider(exc: BaseException, run_config: RunConfig) -> None
         return
     provider = reply.upstream_provider
     code = _model_error_status_code(exc)
-    if reply.upstream_error_type == "provider_unavailable":
+    if isinstance(exc, StreamTimeoutError):
+        reason = exc.reason
+    elif reply.upstream_error_type == "timeout":
+        reason = "upstream_timeout"
+    elif reply.upstream_error_type == "provider_unavailable":
         reason = "provider_unavailable"
     elif reply.upstream_rejected:
         reason = f"upstream_rejected_{code}"

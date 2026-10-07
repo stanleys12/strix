@@ -30,7 +30,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
@@ -196,17 +196,6 @@ def failed_reply(exc: BaseException) -> HttpReply | None:
     """The reply of the attempt that raised ``exc``."""
     reply = getattr(exc, _FAILED_REPLY_ATTR, None)
     return reply if isinstance(reply, HttpReply) else None
-
-
-@contextlib.contextmanager
-def capture_reply() -> Iterator[HttpReply]:
-    """Open the attempt's reply here so it outlives the logging wrapper inside."""
-    reply = HttpReply()
-    token = _http_reply.set(reply)
-    try:
-        yield reply
-    finally:
-        _reset_http_reply(token)
 
 
 async def record_http_reply(response: Response) -> None:
@@ -1291,7 +1280,7 @@ class RequestLoggingModel(Model):
         raw_response: object = None
         first_event_mono: float | None = None
         finish_reason: str | None = None
-        reply = _http_reply.get() or HttpReply()
+        reply = HttpReply()
         token = _http_reply.set(reply)
         try:
             async for event in self._inner.stream_response(

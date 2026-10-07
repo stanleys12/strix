@@ -264,23 +264,19 @@ class _TurnGuardModel(Model):
     included). ``LLM_STREAM_IDLE_TIMEOUT`` bounds the gap between events so the
     turn fails instead of hanging, and the existing retry path replays it.
     ``LLM_STREAM_FIRST_EVENT_TIMEOUT`` and ``LLM_STREAM_TOTAL_TIMEOUT`` bound
-    the first event and the whole stream. When one of these fires, or OpenRouter
-    reports an upstream timeout, the OpenRouter provider serving the attempt is
-    banned (if a chunk named it) before the retry.
+    the first event and the whole stream.
     """
 
     def __init__(
         self,
         inner: Model,
         *,
-        model_name: str | None = None,
         max_tool_calls_per_turn: int = 0,
         stream_idle_timeout: float = 0.0,
         first_event_timeout: float = 0.0,
         total_timeout: float = 0.0,
     ) -> None:
         self._inner = inner
-        self._model_name = model_name
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._stream_idle_timeout = stream_idle_timeout
         self._first_event_timeout = first_event_timeout
@@ -371,32 +367,15 @@ class _TurnGuardModel(Model):
             conversation_id=conversation_id,
             prompt=prompt,
         )
-        with request_log.capture_reply() as reply:
-            try:
-                async for event in _with_timeouts(
-                    stream,
-                    idle=self._stream_idle_timeout,
-                    first_event=self._first_event_timeout,
-                    total=self._total_timeout,
-                ):
-                    guarded = _guard_event(event, rewriter, limiter)
-                    if guarded is not None:
-                        yield guarded
-            except Exception as exc:
-                if isinstance(exc, _StreamTimeoutError):
-                    reason = exc.reason
-                elif reply.upstream_error_type == "timeout":
-                    reason = "upstream_timeout"
-                else:
-                    raise
-                if reply.upstream_provider and self._model_name:
-                    await asyncio.to_thread(
-                        provider_bans.ban_provider,
-                        self._model_name,
-                        reply.upstream_provider,
-                        reason,
-                    )
-                raise
+        async for event in _with_timeouts(
+            stream,
+            idle=self._stream_idle_timeout,
+            first_event=self._first_event_timeout,
+            total=self._total_timeout,
+        ):
+            guarded = _guard_event(event, rewriter, limiter)
+            if guarded is not None:
+                yield guarded
         self._log_dropped(limiter)
 
 
@@ -427,9 +406,9 @@ async def _aclose(stream: AsyncIterator[TResponseStreamEvent]) -> None:
             await stream.aclose()
 
 
-class _StreamTimeoutError(TimeoutError):
-    def __init__(self, reason: str, message: str = "") -> None:
-        super().__init__(message or reason)
+class StreamTimeoutError(TimeoutError):
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
         self.reason = reason
 
 
@@ -443,37 +422,32 @@ async def _with_timeouts(
     """Bound the first event, the gap between events and the whole stream; 0 is no bound."""
     iterator = stream.__aiter__()
     deadline = time.monotonic() + total
-    first = True
     while True:
         limits: list[tuple[float, float, str]] = []
         # Without a first-event bound, the idle bound covers the first event too.
-        on_first = first and bool(first_event)
-        gap = first_event if on_first else idle
-        if gap:
-            limits.append(
-                (gap, gap, "stream_first_event_timeout" if on_first else "stream_idle_timeout")
-            )
+        if first_event:
+            limits.append((first_event, first_event, "stream_first_event_timeout"))
+        elif idle:
+            limits.append((idle, idle, "stream_idle_timeout"))
         if total:
             limits.append((max(0.0, deadline - time.monotonic()), total, "stream_total_timeout"))
         try:
-            if not limits:
-                event = await iterator.__anext__()
+            if limits:
+                event = await _next_event(iterator, *min(limits))
             else:
-                wait, limit, reason = min(limits)
-                event = await _next_event(iterator, wait, reason)
+                event = await iterator.__anext__()
         except StopAsyncIteration:
             return
-        except _StreamTimeoutError:
+        except StreamTimeoutError as exc:
             await _aclose(stream)
-            message = f"model stream hit {reason} ({limit:.0f}s)"
-            logger.warning("%s; abandoning the turn", message)
-            raise _StreamTimeoutError(reason, message) from None
-        first = False
+            logger.warning("%s; abandoning the turn", exc)
+            raise
+        first_event = 0.0
         yield event
 
 
 async def _next_event(
-    iterator: AsyncIterator[TResponseStreamEvent], timeout: float, reason: str
+    iterator: AsyncIterator[TResponseStreamEvent], wait: float, limit: float, reason: str
 ) -> TResponseStreamEvent:
     # asyncio.timeout() cancels without a message, so the request log could not
     # tell this from a shutdown; this is asyncio.timeout() with a message.
@@ -487,12 +461,15 @@ async def _next_event(
         expired = True
         task.cancel(msg=f"strix:{reason}")
 
-    handle = asyncio.get_running_loop().call_later(timeout, expire)
+    handle = asyncio.get_running_loop().call_later(wait, expire)
     try:
         return await iterator.__anext__()
     except BaseException as exc:
         if expired and task.uncancel() <= cancelling and isinstance(exc, asyncio.CancelledError):
-            raise _StreamTimeoutError(reason) from None
+            error = StreamTimeoutError(reason, f"model stream hit {reason} ({limit:.0f}s)")
+            # Keep the attempt's reply: it names the provider to ban.
+            setattr(error, request_log._FAILED_REPLY_ATTR, request_log.failed_reply(exc))
+            raise error from None
         raise
     finally:
         handle.cancel()
@@ -678,7 +655,6 @@ class StrixProvider(MultiProvider):
                 idle_timeout = first_event_timeout = total_timeout = 0.0
         return _TurnGuardModel(
             model,
-            model_name=model_name or llm.model,
             max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
             stream_idle_timeout=idle_timeout,
             first_event_timeout=first_event_timeout,

@@ -88,11 +88,7 @@ def _stream(base_url: str, *, idle_timeout: float) -> AsyncIterator[Any]:
         base_url=base_url,
     )
     guarded = _TurnGuardModel(inner, stream_idle_timeout=idle_timeout)
-    return _call(guarded)
-
-
-def _call(model: Model) -> AsyncIterator[Any]:
-    return model.stream_response(
+    return guarded.stream_response(
         None,
         "go",
         ModelSettings(),
@@ -124,12 +120,14 @@ async def test_stalled_stream_is_abandoned_by_the_watchdog(stalling_gateway: str
     request_log.register_sink(logged.append)
     started = time.monotonic()
     try:
-        with pytest.raises(TimeoutError, match="stream_idle_timeout"):
+        with pytest.raises(TimeoutError, match="stream_idle_timeout") as raised:
             await _drain(stalling_gateway, idle_timeout=1)
     finally:
         request_log.unregister_sink(logged.append)
 
     assert time.monotonic() - started < _STALL_SECONDS
+    # The attempt's reply survives for the provider ban.
+    assert request_log.failed_reply(raised.value) is not None
     # The request log can tell our timeout from a shutdown.
     assert [event.error_message for event in logged] == [
         "attempt cancelled before the reply was consumed: strix:stream_idle_timeout"
@@ -165,75 +163,6 @@ async def test_first_event_and_whole_stream_are_bounded() -> None:
         [event async for event in _with_timeouts(_slow_start(), idle=0.2)]
     with pytest.raises(TimeoutError, match="stream_total_timeout"):
         [event async for event in _with_timeouts(_endless(), idle=5, total=0.3)]
-
-
-class _UpstreamInner(Model):
-    """Records the upstream provider like the OpenRouter chunk parser, then fails."""
-
-    def __init__(self, provider: str | None, error_type: str | None = None) -> None:
-        self._provider = provider
-        self._error_type = error_type
-
-    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-    async def stream_response(self, *_: Any, **__: Any) -> AsyncIterator[Any]:
-        if self._error_type:
-            request_log.record_upstream_provider(self._provider, self._error_type)
-            raise RuntimeError("upstream error chunk")
-        await asyncio.sleep(0.05)
-        request_log.record_upstream_provider(self._provider)
-        yield "event"
-        await asyncio.sleep(_STALL_SECONDS)
-
-
-@pytest.fixture
-def bans(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
-    calls: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        "strix.llm.provider_bans.ban_provider", lambda *args: calls.append(args) or True
-    )
-    return calls
-
-
-async def _drain_guarded(inner: Model, **timeouts: float) -> None:
-    logging_model = request_log.RequestLoggingModel(
-        inner, model_name="openrouter/z-ai/glm-5.3", provider="openrouter", base_url=None
-    )
-    guarded = _TurnGuardModel(logging_model, model_name="openrouter/z-ai/glm-5.3", **timeouts)
-    [event async for event in _call(guarded)]
-
-
-@pytest.mark.asyncio
-async def test_stream_timeout_bans_the_provider_that_served_it(
-    bans: list[tuple[str, str, str]],
-) -> None:
-    with pytest.raises(TimeoutError):
-        await _drain_guarded(_UpstreamInner("InferenceNet"), stream_idle_timeout=0.2)
-
-    assert bans == [("openrouter/z-ai/glm-5.3", "InferenceNet", "stream_idle_timeout")]
-
-
-@pytest.mark.asyncio
-async def test_openrouter_upstream_timeout_bans_the_provider(
-    bans: list[tuple[str, str, str]],
-) -> None:
-    with pytest.raises(RuntimeError):
-        await _drain_guarded(_UpstreamInner("InferenceNet", "timeout"))
-    with pytest.raises(RuntimeError):
-        await _drain_guarded(_UpstreamInner("InferenceNet", "provider_unavailable"))
-
-    assert bans == [("openrouter/z-ai/glm-5.3", "InferenceNet", "upstream_timeout")]
-
-
-@pytest.mark.asyncio
-async def test_timeout_without_a_known_provider_bans_nothing(
-    bans: list[tuple[str, str, str]],
-) -> None:
-    with pytest.raises(TimeoutError, match="stream_first_event_timeout"):
-        await _drain_guarded(_UpstreamInner(None), first_event_timeout=0.01)
-
-    assert bans == []
 
 
 @pytest.fixture

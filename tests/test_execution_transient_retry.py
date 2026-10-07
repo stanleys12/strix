@@ -17,6 +17,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.models import StreamTimeoutError
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
 from strix.llm import provider_bans, request_log
@@ -147,6 +148,24 @@ async def test_bans_upstream_after_repeated_mid_stream_4xx(
         )
     await execution._maybe_ban_provider(_status_error(400), _OPENROUTER_RUN_CONFIG)
     assert bans == [("openrouter/z-ai/glm-5.3", "Relace", "repeated_4xx")]
+
+
+@pytest.mark.asyncio
+async def test_bans_upstream_right_away_on_timeouts(bans: list[tuple[str, str, str]]) -> None:
+    await execution._maybe_ban_provider(
+        _upstream_error(408, "Relace", error_type="timeout"), _OPENROUTER_RUN_CONFIG
+    )
+    stalled = StreamTimeoutError("stream_idle_timeout", "stalled")
+    setattr(
+        stalled,
+        request_log._FAILED_REPLY_ATTR,
+        request_log.HttpReply(upstream_provider="InferenceNet"),
+    )
+    await execution._maybe_ban_provider(stalled, _OPENROUTER_RUN_CONFIG)
+    assert bans == [
+        ("openrouter/z-ai/glm-5.3", "Relace", "upstream_timeout"),
+        ("openrouter/z-ai/glm-5.3", "InferenceNet", "stream_idle_timeout"),
+    ]
 
 
 class _FakeStream:
