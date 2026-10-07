@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 import litellm
 import pytest
-import requests
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
 from agents.models import _openai_shared
@@ -28,10 +25,6 @@ from strix.config.models import (
 )
 from strix.config.settings import Settings
 from strix.llm.request_log import RequestLoggingModel
-
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
 def test_request_timeout_extra_args_positive() -> None:
@@ -212,71 +205,9 @@ def test_configure_sdk_api_route_follows_the_given_model(
     assert routes == ["responses", "chat_completions"]
 
 
-class _FakeOpenRouterResponse:
-    def raise_for_status(self) -> None:
-        pass
-
-    def json(self) -> dict[str, Any]:
-        return {
-            "data": [
-                {"id": "z-ai/glm-5.3", "architecture": {"input_modalities": ["text"]}},
-                {"id": "openai/gpt-5", "architecture": {"input_modalities": ["text", "image"]}},
-            ]
-        }
-
-
-@pytest.fixture
-def openrouter_models(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    calls: list[str] = []
-
-    def fake_get(url: str, **_kwargs: Any) -> _FakeOpenRouterResponse:
-        calls.append(url)
-        return _FakeOpenRouterResponse()
-
-    monkeypatch.setattr(requests, "get", fake_get)
-    models._openrouter_input_modalities.cache_clear()
-    yield calls
-    models._openrouter_input_modalities.cache_clear()
-
-
-def test_openrouter_image_support_follows_input_modalities(openrouter_models: list[str]) -> None:
-    assert model_supports_images("openrouter/z-ai/glm-5.3") is False
-    assert model_supports_images("litellm/openrouter/openai/gpt-5") is True
-    assert len(openrouter_models) == 1
-
-
-@pytest.mark.usefixtures("openrouter_models")
-def test_openrouter_model_missing_from_listing_falls_back_to_catalog(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(litellm.model_cost, "openrouter/acme/text-only", {"supports_vision": False})
-    assert model_supports_images("openrouter/acme/text-only") is False
-    assert model_supports_images("openrouter/acme/unknown") is True
-
-
-def test_openrouter_fetch_failure_fails_open(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    def failing_get(*_args: Any, **_kwargs: Any) -> None:
-        raise requests.ConnectionError("offline")
-
-    monkeypatch.setattr(requests, "get", failing_get)
-    models._openrouter_input_modalities.cache_clear()
-    try:
-        assert model_supports_images("openrouter/acme/unknown") is True
-        assert model_supports_images("openrouter/acme/other") is True
-    finally:
-        models._openrouter_input_modalities.cache_clear()
-    assert caplog.text.count("Could not fetch OpenRouter model modalities") == 1
-
-
-def test_non_openrouter_image_support_uses_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    def unexpected_get(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("non-OpenRouter models must not fetch the OpenRouter listing")
-
-    monkeypatch.setattr(requests, "get", unexpected_get)
-    monkeypatch.setitem(litellm.model_cost, "acme-text", {"supports_vision": False})
+def test_image_support_follows_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(litellm.model_cost, "acme-text", {})
     monkeypatch.setitem(litellm.model_cost, "acme-vision", {"supports_vision": True})
     assert model_supports_images("acme-text") is False
-    assert model_supports_images("openai/acme-vision") is True
+    assert model_supports_images("litellm/openai/acme-vision") is True
     assert model_supports_images("acme-unknown-model") is True
