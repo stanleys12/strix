@@ -161,6 +161,8 @@ async def test_first_event_and_whole_stream_are_bounded() -> None:
 
     with pytest.raises(TimeoutError, match="stream_first_event_timeout"):
         [event async for event in _with_timeouts(_slow_start(), idle=5, first_event=0.2)]
+    with pytest.raises(TimeoutError, match="stream_idle_timeout"):
+        [event async for event in _with_timeouts(_slow_start(), idle=0.2)]
     with pytest.raises(TimeoutError, match="stream_total_timeout"):
         [event async for event in _with_timeouts(_endless(), idle=5, total=0.3)]
 

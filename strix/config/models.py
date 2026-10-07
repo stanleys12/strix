@@ -446,10 +446,12 @@ async def _with_timeouts(
     first = True
     while True:
         limits: list[tuple[float, float, str]] = []
-        gap = first_event if first else idle
+        # Without a first-event bound, the idle bound covers the first event too.
+        on_first = first and bool(first_event)
+        gap = first_event if on_first else idle
         if gap:
             limits.append(
-                (gap, gap, "stream_first_event_timeout" if first else "stream_idle_timeout")
+                (gap, gap, "stream_first_event_timeout" if on_first else "stream_idle_timeout")
             )
         if total:
             limits.append((max(0.0, deadline - time.monotonic()), total, "stream_total_timeout"))
