@@ -8,7 +8,6 @@ import threading
 import httpx
 
 from strix.config.loader import load_settings
-from strix.telemetry.logging import current_scan_id
 
 
 logger = logging.getLogger(__name__)
@@ -44,56 +43,30 @@ def _provider_slugs(model: str) -> dict[str, str]:
     return _SLUGS[model]
 
 
-def ban_provider(model: str, provider: str, reason: str) -> bool:
+def ban_provider(model: str, provider: str, reason: str) -> None:
     """Ban for the rest of the run; ``provider`` may be a display name or slug."""
     if not load_settings().llm.openrouter_provider_bans:
-        return False
+        return
     model = _model_id(model)
     try:
         slugs = _provider_slugs(model)
+        slug = slugs[provider.strip().lower()]
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "provider_ban_skipped upstream=%s model=%s reason=%s scan_id=%s: "
-            "could not list the model's providers: %s",
-            provider,
-            model,
-            reason,
-            current_scan_id(),
-            exc,
+            "provider_ban_skipped upstream=%s model=%s reason=%s: %r", provider, model, reason, exc
         )
-        return False
-    slug = slugs.get(provider.strip().lower())
-    if slug is None:
-        logger.warning(
-            "provider_ban_skipped upstream=%s model=%s reason=%s scan_id=%s: unknown provider",
-            provider,
-            model,
-            reason,
-            current_scan_id(),
-        )
-        return False
+        return
     with _LOCK:
         banned = _BANNED.setdefault(model, set())
         if slug in banned:
-            return True
+            return
         banned.add(slug)
         logger.warning(
-            "provider_banned upstream=%s slug=%s model=%s reason=%s scan_id=%s",
-            provider,
-            slug,
-            model,
-            reason,
-            current_scan_id(),
+            "provider_banned upstream=%s slug=%s model=%s reason=%s", provider, slug, model, reason
         )
         if banned >= set(slugs.values()):
             banned.clear()
-            logger.warning(
-                "provider_bans_reset model=%s scan_id=%s: every provider was banned",
-                model,
-                current_scan_id(),
-            )
-            return False
-        return True
+            logger.warning("provider_bans_reset model=%s: every provider was banned", model)
 
 
 def banned_providers(model: str) -> list[str]:
