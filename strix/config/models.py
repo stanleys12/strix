@@ -272,9 +272,9 @@ class _TurnGuardModel(Model):
         inner: Model,
         *,
         max_tool_calls_per_turn: int = 0,
-        stream_idle_timeout: float = 0.0,
-        first_event_timeout: float = 0.0,
-        total_timeout: float = 0.0,
+        stream_idle_timeout: float | None = None,
+        first_event_timeout: float | None = None,
+        total_timeout: float | None = None,
     ) -> None:
         self._inner = inner
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
@@ -415,23 +415,24 @@ class StreamTimeoutError(TimeoutError):
 async def _with_timeouts(
     stream: AsyncIterator[TResponseStreamEvent],
     *,
-    idle: float,
+    idle: float | None = None,
     first_event: float | None = None,
-    total: float = 0.0,
+    total: float | None = None,
 ) -> AsyncIterator[TResponseStreamEvent]:
-    """Bound the first event, the gap between events and the whole stream; 0 is no bound."""
+    """Bound the first event, the gap between events and the whole stream; None is no bound."""
     iterator = stream.__aiter__()
-    deadline = time.monotonic() + total
+    started = time.monotonic()
     while True:
         limits: list[tuple[float, float, str]] = []
         # Wait until the soonest limit expires: first-event (else idle) until the
         # first event arrives, then idle; plus whatever is left of the total.
-        if first_event:
+        if first_event is not None:
             limits.append((first_event, first_event, "stream_first_event_timeout"))
-        elif idle:
+        elif idle is not None:
             limits.append((idle, idle, "stream_idle_timeout"))
-        if total:
-            limits.append((max(0.0, deadline - time.monotonic()), total, "stream_total_timeout"))
+        if total is not None:
+            left = max(0.0, started + total - time.monotonic())
+            limits.append((left, total, "stream_total_timeout"))
         try:
             if limits:
                 event = await _next_event(iterator, *min(limits))
@@ -610,9 +611,10 @@ class StrixProvider(MultiProvider):
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
-        idle_timeout = float(llm.stream_idle_timeout)
-        first_event_timeout = float(llm.stream_first_event_timeout)
-        total_timeout = float(llm.stream_total_timeout)
+        # The settings use 0 for no bound.
+        idle_timeout = float(llm.stream_idle_timeout) or None
+        first_event_timeout = float(llm.stream_first_event_timeout) or None
+        total_timeout = float(llm.stream_total_timeout) or None
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
@@ -653,7 +655,7 @@ class StrixProvider(MultiProvider):
                 # The wrapper emits its single event only once the whole request
                 # is done, so an idle gap is meaningless here; the request
                 # timeout bounds it instead.
-                idle_timeout = first_event_timeout = total_timeout = 0.0
+                idle_timeout = first_event_timeout = total_timeout = None
         return _TurnGuardModel(
             model,
             max_tool_calls_per_turn=llm.max_tool_calls_per_turn,

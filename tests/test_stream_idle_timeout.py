@@ -79,7 +79,7 @@ def stalling_gateway() -> Iterator[str]:
         server.server_close()
 
 
-def _stream(base_url: str, *, idle_timeout: float) -> AsyncIterator[Any]:
+def _stream(base_url: str, *, idle_timeout: float | None) -> AsyncIterator[Any]:
     client = AsyncOpenAI(api_key="tok", base_url=base_url, max_retries=0, timeout=_STALL_SECONDS)
     inner: Model = request_log.RequestLoggingModel(
         OpenAIChatCompletionsModel(model="gw-model", openai_client=client),
@@ -102,7 +102,7 @@ def _stream(base_url: str, *, idle_timeout: float) -> AsyncIterator[Any]:
     )
 
 
-async def _drain(base_url: str, *, idle_timeout: float) -> list[Any]:
+async def _drain(base_url: str, *, idle_timeout: float | None) -> list[Any]:
     return [event async for event in _stream(base_url, idle_timeout=idle_timeout)]
 
 
@@ -111,7 +111,7 @@ async def test_stalled_stream_hangs_without_the_watchdog(stalling_gateway: str) 
     # Repro: tokens arrive, then nothing. Un-watched, the turn just sits there;
     # the request timeout is far away and would reset on any keepalive byte.
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(_drain(stalling_gateway, idle_timeout=0), timeout=2)
+        await asyncio.wait_for(_drain(stalling_gateway, idle_timeout=None), timeout=2)
 
 
 @pytest.mark.asyncio
@@ -216,4 +216,4 @@ def test_idle_timeout_is_off_without_streaming(
 
     model = StrixProvider().get_model("openai/gpt-4o-mini")
     assert isinstance(model, _TurnGuardModel)
-    assert model._stream_idle_timeout == model._first_event_timeout == model._total_timeout == 0
+    assert model._stream_idle_timeout is model._first_event_timeout is model._total_timeout is None
