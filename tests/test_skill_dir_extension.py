@@ -70,16 +70,15 @@ def test_registered_dir_adds_new_skill(tmp_path: Path) -> None:
     assert load_skills(["widget"]) == {"widget": "widget body"}
 
 
-def test_skill_modality_blocks_follow_image_support(tmp_path: Path) -> None:
-    body = (
-        "a\n<!-- images -->\nlook\n<!-- /images -->\n"
-        "<!-- text-only -->\nread\n<!-- /text-only -->\nb"
-    )
-    _write_skill(tmp_path, "extra", "widget", body)
+def test_only_jinja_skills_are_rendered(tmp_path: Path) -> None:
+    body = "{% if supports_images %}\nlook\n{% else %}\nread\n{% endif %}\n"
+    _write_skill(tmp_path, "extra", "plain", body)
+    _write_skill(tmp_path, "extra", "templated", f"---\ntemplate: jinja\n---\n{body}")
     register_skill_dir(tmp_path)
 
-    assert load_skills(["widget"]) == {"widget": "a\nlook\nb"}
-    assert load_skills(["widget"], supports_images=False) == {"widget": "a\nread\nb"}
+    assert load_skills(["plain"]) == {"plain": body}
+    assert load_skills(["templated"]) == {"templated": "look\n"}
+    assert load_skills(["templated"], supports_images=False) == {"templated": "read\n"}
 
 
 def test_available_skill_includes_frontmatter_description(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TypeGuard
 
 import yaml
+from jinja2 import Environment, StrictUndefined
 
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -13,9 +14,14 @@ from strix.utils.resource_paths import get_strix_resource_path
 logger = logging.getLogger(__name__)
 
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL)
-# Skill text between `<!-- images -->` and `<!-- /images -->` is kept only for models
-# that accept images; text between `<!-- text-only -->` markers only for those that don't.
-_MODALITY_BLOCK_PATTERN = re.compile(r"<!-- (images|text-only) -->\n(.*?)<!-- /\1 -->\n", re.DOTALL)
+# Only skills with `template: jinja` in their frontmatter are rendered; the rest hold
+# literal `{{ }}` payloads.
+_SKILL_TEMPLATES = Environment(
+    autoescape=False,  # noqa: S701 - prompts, not HTML
+    undefined=StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
@@ -276,7 +282,6 @@ def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict
     if not search_dirs:
         return {}
 
-    keep = "images" if supports_images else "text-only"
     skill_content: dict[str, str] = {}
     for skill_name in skill_names:
         candidates = _candidate_skill_files(skill_name)
@@ -295,10 +300,12 @@ def load_skills(skill_names: list[str], *, supports_images: bool = True) -> dict
             continue
 
         var_name = skill_name.split("/")[-1]
-        _, skill_body = _parse_skill_content(content, file_path)
-        skill_content[var_name] = _MODALITY_BLOCK_PATTERN.sub(
-            lambda m: m[2] if m[1] == keep else "", skill_body
-        )
+        metadata, skill_body = _parse_skill_content(content, file_path)
+        if metadata.get("template") == "jinja":
+            skill_body = _SKILL_TEMPLATES.from_string(skill_body).render(
+                supports_images=supports_images
+            )
+        skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
         _track_skill_loaded(var_name, file_path)
 

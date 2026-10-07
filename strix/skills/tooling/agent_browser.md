@@ -1,6 +1,7 @@
 ---
 name: agent_browser
 description: agent-browser CLI for headless Chrome via shell. Snapshot-and-ref workflow, click/fill/extract, screenshots, multi-tab, multi-session, network mocking. Pre-installed in the sandbox; invoke via exec_command.
+template: jinja
 ---
 
 
@@ -261,7 +262,7 @@ only for simple expressions.
 ### Screenshot
 
 `agent-browser screenshot` writes a PNG to disk in the sandbox.
-<!-- images -->
+{% if supports_images %}
 The shell command alone does **not** put the image into your context —
 chain it with the SDK ``view_image`` tool to actually see it:
 
@@ -276,13 +277,12 @@ the full path on stdout — pass that to ``view_image``). If you need a
 specific filename, keep it inside that directory or a sibling hidden
 dir under ``/workspace``. Never write screenshots to ``/tmp`` —
 ``view_image`` rejects anything outside the workspace root.
-<!-- /images -->
-<!-- text-only -->
+{% else %}
 You are running on a text-only model and cannot view images, so a
 screenshot is only useful as a saved file (for example, login evidence).
 Drive the page from `snapshot -i` refs, `eval` for any DOM/JS state you
 need to read, and `text @ref` / `get text` for content extraction.
-<!-- /text-only -->
+{% endif %}
 
 ```bash
 agent-browser screenshot                        # path printed on stdout
@@ -291,7 +291,7 @@ agent-browser screenshot --full                 # full scroll height
 agent-browser screenshot --annotate             # numbered labels + legend keyed to snapshot refs
 ```
 
-<!-- images -->
+{% if supports_images %}
 `--annotate` is designed for multimodal models: each label `[N]` maps
 to ref `@eN`. Take the annotated screenshot, then ``view_image`` it,
 and you can correlate visual layout with snapshot refs.
@@ -307,7 +307,7 @@ supported", or similar), you are running on a text-only model — stop
 calling it and stop taking screenshots. Drive the page entirely from
 `snapshot -i` refs, `eval` for any DOM/JS state you need to read, and
 `text @ref` / `get text` for content extraction.
-<!-- /images -->
+{% endif %}
 
 ### Handle multiple pages via tabs
 
