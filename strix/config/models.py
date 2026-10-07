@@ -416,7 +416,7 @@ async def _with_timeouts(
     stream: AsyncIterator[TResponseStreamEvent],
     *,
     idle: float,
-    first_event: float = 0.0,
+    first_event: float | None = None,
     total: float = 0.0,
 ) -> AsyncIterator[TResponseStreamEvent]:
     """Bound the first event, the gap between events and the whole stream; 0 is no bound."""
@@ -424,7 +424,8 @@ async def _with_timeouts(
     deadline = time.monotonic() + total
     while True:
         limits: list[tuple[float, float, str]] = []
-        # Without a first-event bound, the idle bound covers the first event too.
+        # Wait until the soonest limit expires: first-event (else idle) until the
+        # first event arrives, then idle; plus whatever is left of the total.
         if first_event:
             limits.append((first_event, first_event, "stream_first_event_timeout"))
         elif idle:
@@ -442,7 +443,7 @@ async def _with_timeouts(
             await _aclose(stream)
             logger.warning("%s; abandoning the turn", exc)
             raise
-        first_event = 0.0
+        first_event = None
         yield event
 
 
