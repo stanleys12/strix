@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import uuid
 from collections.abc import Callable
@@ -147,22 +148,27 @@ def _with_compaction_check(run_config: RunConfig) -> RunConfig:
     model = _run_config_model(run_config)
     if model is None:
         return run_config
+    inner = run_config.call_model_input_filter
     first_call = True
 
     async def _check(data: CallModelData[Any]) -> ModelInputData:
         nonlocal first_call
+        model_data = data.model_data
+        if inner is not None:
+            result = inner(data)
+            model_data = await result if inspect.isawaitable(result) else result
         # Skip the first call: the cycle compacts right before the run, and the run's
         # new input is only persisted after this filter, so stopping here would lose it.
         if not first_call and await asyncio.to_thread(
             needs_compaction,
             model,
-            data.model_data.instructions or "",
+            model_data.instructions or "",
             _agent_tools_text(data.agent),
-            data.model_data.input,
+            model_data.input,
         ):
             raise CompactionNeededError(model)
         first_call = False
-        return data.model_data
+        return model_data
 
     return replace(run_config, call_model_input_filter=_check)
 

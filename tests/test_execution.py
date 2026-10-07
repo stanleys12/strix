@@ -1553,6 +1553,26 @@ async def test_compaction_check_stops_run_after_first_call_when_over_budget(
         await guard(data)
 
 
+@pytest.mark.asyncio
+async def test_compaction_check_chains_an_existing_input_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[Any] = []
+    monkeypatch.setattr(execution, "needs_compaction", lambda *args: seen.append(args[3]))
+    filtered = ModelInputData(input=[{"role": "user", "content": "scrubbed"}], instructions="sys")
+    run_config = RunConfig(model="m", call_model_input_filter=lambda _data: filtered)
+    check: Any = execution._with_compaction_check(run_config).call_model_input_filter
+    data = CallModelData(
+        model_data=ModelInputData(input=[], instructions="sys"),
+        agent=MagicMock(tools=[]),
+        context=None,
+    )
+
+    assert await check(data) is filtered
+    assert await check(data) is filtered
+    assert seen == [filtered.input]
+
+
 class _BudgetStream:
     def __init__(self, exc: BaseException | None) -> None:
         self.run_loop_exception = exc
