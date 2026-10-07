@@ -125,6 +125,5 @@ def test_view_image_is_left_out_for_text_only_models(
     filesystem = agent.capabilities[0]
     filesystem.bind(cast("Any", object()))
 
-    names = [tool.name for tool in filesystem.tools()]
-    assert ("view_image" in names) is has_view_image
-    assert "apply_patch" in names
+    view_image = next(tool for tool in filesystem.tools() if tool.name == "view_image")
+    assert cast("FunctionTool", view_image).is_enabled is has_view_image

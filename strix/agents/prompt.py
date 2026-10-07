@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -20,16 +19,6 @@ _PROMPT_DIRNAME = "prompts"
 # Marks where the system prompt is split so the part before it can be cached.
 # Removed before the prompt is sent.
 CACHE_POINT = "<cache_point>"
-
-_SCREENSHOT_SECTION_RE = re.compile(r"^### Screenshot\n.*?(?=^### )", re.MULTILINE | re.DOTALL)
-_TEXT_ONLY_SCREENSHOT_SECTION = """### Screenshot
-
-You are running on a text-only model and cannot view images, so do not take
-screenshots. Drive the page entirely from `snapshot -i` refs, `eval` for any
-DOM/JS state you need to read, and `text @ref` / `get text` for content
-extraction.
-
-"""
 
 
 def _resolve_skills(
@@ -131,11 +120,7 @@ def render_system_prompt(
             is_root=is_root,
             is_diff_scoped=is_diff_scoped,
         )
-        skill_content = load_skills(skills_to_load)
-        if not supports_images and "agent_browser" in skill_content:
-            skill_content["agent_browser"] = _SCREENSHOT_SECTION_RE.sub(
-                _TEXT_ONLY_SCREENSHOT_SECTION, skill_content["agent_browser"], count=1
-            )
+        skill_content = load_skills(skills_to_load, supports_images=supports_images)
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
         # Skills every agent of this kind loads come first, so siblings share them

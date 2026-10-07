@@ -292,8 +292,8 @@ def test_text_only_prompt_drops_screenshot_guidance() -> None:
 
     prompt = render_system_prompt(include_scope=False, supports_images=False)
     assert "view_image" not in prompt
-    assert "text-only model" in prompt
-    assert "### Handle multiple pages via tabs" in prompt
+    assert "text-only model and cannot view images" in prompt
+    assert "<!--" not in prompt
 
 
 def test_scope_is_sent_as_its_own_system_message_on_cache_point_routes() -> None:

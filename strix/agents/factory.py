@@ -375,16 +375,15 @@ def _configure_filesystem_tools(
             )
 
 
-class _FilesystemWithoutViewImage(Filesystem):
-    def tools(self) -> list[Tool]:
-        return [tool for tool in super().tools() if tool.name != "view_image"]
-
-
-def _make_filesystem_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
+def _make_filesystem_configurator(
+    *, chat_completions: bool, strict_schemas: bool, supports_images: bool = True
+) -> Any:
     def configure(toolset: Any) -> None:
         _configure_filesystem_tools(
             toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
         )
+        if not supports_images:
+            toolset.view_image.is_enabled = False
 
     return configure
 
@@ -736,10 +735,11 @@ def build_strix_agent(
         tool_use_behavior=_finish_tool_use_behavior,
         model=None,
         capabilities=[
-            (Filesystem if supports_images else _FilesystemWithoutViewImage)(
+            Filesystem(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
                     strict_schemas=strict_tool_schemas,
+                    supports_images=supports_images,
                 ),
             ),
             Shell(

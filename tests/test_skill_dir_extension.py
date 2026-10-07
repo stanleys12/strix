@@ -70,6 +70,18 @@ def test_registered_dir_adds_new_skill(tmp_path: Path) -> None:
     assert load_skills(["widget"]) == {"widget": "widget body"}
 
 
+def test_skill_modality_blocks_follow_image_support(tmp_path: Path) -> None:
+    body = (
+        "a\n<!-- images -->\nlook\n<!-- /images -->\n"
+        "<!-- text-only -->\nread\n<!-- /text-only -->\nb"
+    )
+    _write_skill(tmp_path, "extra", "widget", body)
+    register_skill_dir(tmp_path)
+
+    assert load_skills(["widget"]) == {"widget": "a\nlook\nb"}
+    assert load_skills(["widget"], supports_images=False) == {"widget": "a\nread\nb"}
+
+
 def test_available_skill_includes_frontmatter_description(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
